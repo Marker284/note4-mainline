@@ -1,0 +1,232 @@
+From 833e84b215b1f21b11d7350832aeffd199a77c64 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:15 +0500
+Subject: [PATCH 03/16] ARM: dts: samsung: add Galaxy Note 4 (treltexx,
+ Exynos5433 AArch32)
+
+---
+ .../boot/dts/samsung/exynos5433-treltexx.dts  | 212 ++++++++++++++++++
+ 1 file changed, 212 insertions(+)
+ create mode 100644 arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+new file mode 100644
+index 000000000..855a4df75
+--- /dev/null
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -0,0 +1,212 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Samsung Galaxy Note 4 Exynos (SM-N910C/H, "treltexx") — AArch32 build.
++ *
++ * The stock Samsung bootloader (S-Boot) and secure firmware on this phone
++ * only start kernels in AArch32 state, so this file is compiled by the
++ * 32-bit ARM kernel (arch/arm) while re-using the arm64 Exynos5433 SoC and
++ * TM2 board descriptions: the Note 4 is the same Samsung reference design
++ * as the TM2 (S2MPS13, MAX77843, S6E3HA2, STM FTS, WM5110, BCM4358/PCIe).
++ */
++
++#include <arm64/exynos/exynos5433-tm2-common.dtsi>
++
++/ {
++	model = "Samsung Galaxy Note 4 (SM-N910C/H)";
++	compatible = "samsung,treltexx", "samsung,exynos5433";
++	chassis-type = "handset";
++
++	/*
++	 * S-Boot picks the DTB out of the DTBH image by these properties
++	 * (see tools/dtbhtool). Cover every board revision.
++	 */
++	model_info-chip = <5433>;
++	model_info-platform = "trlte";
++	model_info-subtype = "trlte_eur_open";
++	model_info-hw_rev = <0>;
++	model_info-hw_rev_end = <255>;
++
++	/* Android secure firmware is not PSCI (see enable-method below). */
++	/delete-node/ psci;
++
++	/*
++	 * S-Boot rewrites "reg" of the memory node assuming 1 address/size
++	 * cell (like the stock DTB), which is garbage with our 2-cell root.
++	 * The kernel prefers linux,usable-memory over reg, and S-Boot leaves
++	 * it alone. Top 0x980000 is TrustZone (ATAG_MEM ends at 0xdf680000).
++	 */
++	memory@20000000 {
++		linux,usable-memory = <0x0 0x20000000 0x0 0xbf680000>;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/* S-Boot splash framebuffer (s3cfb.bootloaderfb=0x67000000) */
++		fb_mem: framebuffer@67000000 {
++			reg = <0x0 0x67000000 0x0 0xe10000>;
++			no-map;
++		};
++
++		/* 0x25fff000-0x26200000: sec_log ring, used by note4-seclog.c */
++	};
++
++	chosen {
++		/* S-Boot rewrites bootargs; the kernel uses CONFIG_CMDLINE_FORCE. */
++		bootargs = "";
++	};
++};
++
++/* TV/HDMI path unused on the phone. */
++&decon_tv {
++	status = "disabled";
++};
++
++&hdmi {
++	status = "disabled";
++};
++
++/* panel + DSI PHY supplies must stay up while S-Boot's setup is reused */
++/*
++ * Samsung S-Boot reboot modes (PMU INFORM3 = 0x12345670 | mode).
++ * (Stock also sets INFORM2 = 0x12345678 to skip charge-only mode; a
++ * second syscon-reboot-mode instance clashes in sysfs, so not done here.)
++ */
++&pmu_system_controller {
++	reboot-mode-inform3 {
++		compatible = "syscon-reboot-mode";
++		offset = <0x80c>;
++		mode-normal = <0x12345670>;
++		mode-download = <0x12345671>;
++		mode-upload = <0x12345672>;
++		mode-recovery = <0x12345674>;
++	};
++
++};
++
++&ldo6_reg {
++	regulator-always-on;
++};
++
++&ldo7_reg {
++	regulator-always-on;
++};
++
++&ldo27_reg {
++	regulator-always-on;
++};
++
++&ldo28_reg {
++	regulator-always-on;
++};
++
++/*
++ * S-Boot may leave the watchdog running (downstream feeds it with a 30 s
++ * timeout); mainline exynos5433.dtsi has no node for it, so add one so
++ * that s3c2410_wdt can take it over.
++ */
++&soc {
++	watchdog: watchdog@10020000 {
++		compatible = "samsung,s3c6410-wdt";
++		reg = <0x10020000 0x100>;
++		interrupts = <GIC_SPI 101 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&cmu_peris CLK_PCLK_WDT_APOLLO>;
++		clock-names = "watchdog";
++		timeout-sec = <30>;
++	};
++};
++
++/* Secondary cores: SYSRAM_NS boot address + PMU power-up (no PSCI). */
++&cpu0 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu1 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu2 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu3 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu4 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu5 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu6 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cpu7 {
++	enable-method = "samsung,exynos5433-aarch32-smp";
++};
++
++&cmu_disp {
++	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
++	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
++			  <&cmu_mif CLK_DIV_SCLK_DECON_TV_ECLK>,
++			  <&cmu_disp CLK_MOUT_ACLK_DISP_333_USER>,
++			  <&cmu_disp CLK_MOUT_SCLK_DSIM0_USER>,
++			  <&cmu_disp CLK_MOUT_SCLK_DSIM0>,
++			  <&cmu_disp CLK_MOUT_SCLK_DECON_ECLK_USER>,
++			  <&cmu_disp CLK_MOUT_SCLK_DECON_ECLK>,
++			  <&cmu_disp CLK_MOUT_PHYCLK_MIPIDPHY0_RXCLKESC0_USER>,
++			  <&cmu_disp CLK_MOUT_PHYCLK_MIPIDPHY0_BITCLKDIV8_USER>,
++			  <&cmu_disp CLK_MOUT_DISP_PLL>,
++			  <&cmu_mif CLK_MOUT_SCLK_DECON_TV_ECLK_A>,
++			  <&cmu_disp CLK_MOUT_SCLK_DECON_TV_ECLK_USER>,
++			  <&cmu_disp CLK_MOUT_SCLK_DECON_TV_ECLK>,
++			  <&cmu_disp CLK_MOUT_SCLK_DSD_USER>;
++	assigned-clock-parents = <0>, <0>,
++				 <&cmu_mif CLK_ACLK_DISP_333>,
++				 <&cmu_mif CLK_SCLK_DSIM0_DISP>,
++				 <&cmu_disp CLK_MOUT_SCLK_DSIM0_USER>,
++				 <&cmu_mif CLK_SCLK_DECON_ECLK_DISP>,
++				 <&cmu_disp CLK_MOUT_SCLK_DECON_ECLK_USER>,
++				 <&cmu_disp CLK_PHYCLK_MIPIDPHY0_RXCLKESC0_PHY>,
++				 <&cmu_disp CLK_PHYCLK_MIPIDPHY0_BITCLKDIV8_PHY>,
++				 <&cmu_disp CLK_FOUT_DISP_PLL>,
++				 <&cmu_mif CLK_MOUT_BUS_PLL_DIV2>,
++				 <&cmu_mif CLK_SCLK_DECON_TV_ECLK_DISP>,
++				 <&cmu_disp CLK_MOUT_SCLK_DECON_TV_ECLK_USER>,
++				 <&cmu_mif CLK_SCLK_DSD_DISP>;
++	assigned-clock-rates = <250000000>, <400000000>;
++};
++
++&dsi {
++	panel@0 {
++		compatible = "samsung,s6e3ha2";
++		reg = <0>;
++		vdd3-supply = <&ldo27_reg>;
++		vci-supply = <&ldo28_reg>;
++		reset-gpios = <&gpg0 0 GPIO_ACTIVE_LOW>;
++		enable-gpios = <&gpf1 5 GPIO_ACTIVE_HIGH>;
++	};
++};
++
++&ldo31_reg {
++	regulator-name = "TSP_VDD_1.85V_AP";
++	regulator-min-microvolt = <1850000>;
++	regulator-max-microvolt = <1850000>;
++};
++
++&ldo38_reg {
++	regulator-name = "VCC_3.0V_MOTOR_AP";
++	regulator-min-microvolt = <3000000>;
++	regulator-max-microvolt = <3000000>;
++};
++
++&stmfts {
++	touchscreen-size-x = <1439>;
++	touchscreen-size-y = <2559>;
++};
+-- 
+2.56.0
+

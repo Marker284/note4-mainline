@@ -1,0 +1,107 @@
+# Config: linux-postmarketos-exynos5 + kernel/note4.config (merge_config.sh).
+# Mainline kernel for Galaxy Note 4 Exynos (Exynos5433) running in AArch32:
+# the stock S-Boot/secure firmware cannot start arm64 kernels.
+pkgname=linux-samsung-treltexx
+pkgver=7.3.5
+pkgrel=11
+pkgdesc="Galaxy Note 4 Exynos mainline kernel (AArch32)"
+arch="armv7"
+_carch="arm"
+_flavor="samsung-treltexx"
+url="https://kernel.org"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bison
+	elfutils-dev
+	linux-headers
+	pahole
+	clang
+	findutils
+	flex
+	lld
+	llvm
+	openssl-dev
+	perl
+	python3
+	postmarketos-installkernel
+	xz
+	zstd
+"
+
+_config="config-$_flavor.$arch"
+source="
+	https://cdn.kernel.org/pub/linux/kernel/v${pkgver%%.*}.x/linux-$pkgver.tar.xz
+	0001-ARM-exynos-boot-mainline-AArch32-on-Galaxy-Note-4-Ex.patch
+	0002-ARM-exynos-Exynos5433-AArch32-SMP-bring-up-via-SYSRA.patch
+	0003-ARM-dts-samsung-add-Galaxy-Note-4-treltexx-Exynos543.patch
+	0004-Input-stmfts-support-firmwares-needing-register-rese.patch
+	0005-power-supply-add-minimal-MAX77843-charger-driver-stm.patch
+	0006-drm-panel-s6e3ha2-pick-touch-hsync-variant-by-panel-.patch
+	0007-ARM-compressed-put-Note-4-decompressor-markers-behin.patch
+	0008-mfd-max77843-don-t-unmask-charger-fuel-gauge-IRQ-sou.patch
+	0009-ARM-dts-treltexx-Cypress-touchkeys-WM5110-only-sound.patch
+	0010-ARM-dts-treltexx-use-the-physical-arch-timer-firmwar.patch
+	0011-ARM-dts-treltexx-disable-USB2-LPM-in-gadget-mode-NCM.patch
+	0012-ARM-dts-treltexx-cap-Mali-T760-at-267-MHz-TM2-OPP-vo.patch
+	0013-ARM-dts-treltexx-hall-sensor-flip-cover-as-SW_LID.patch
+	0014-ARM-dts-treltexx-Home-and-recent-apps-keys-Super-Pho.patch
+	0015-clk-samsung-exynos5433-don-t-propagate-GPU-rate-chan.patch
+	0016-ARM-dts-treltexx-BCM4773-sensor-hub-CPU-capacities-G.patch
+	$_config
+	mkdtbh.py
+"
+builddir="$srcdir/linux-$pkgver"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/$_config" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 olddefconfig
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-postmarketOS"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+	make zinstall modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir"/boot/dtbs
+	rm -f "$pkgdir"/usr/lib/modules/*/build
+
+	# Samsung DTBH dt.img with this S-Boot's fixed platform/subtype codes
+	python3 "$srcdir"/mkdtbh.py -o "$pkgdir"/boot/dt.img \
+		--chip 5433 --platform 0x3ec3 --subtype 0x3a37307e --rev 0:255 \
+		"$pkgdir"/boot/dtbs/exynos5433-treltexx.dtb
+
+	install -D "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+sha512sums="
+46beb756fee4bd95180afabedcc9426c9bf5edf1420de9fa126ba398a9cb8917859cc41503b64e3f74b966dc46892e8794d3afb009ad05f08ebafde231e9bd29  linux-7.3.5.tar.xz
+3230bd8228454f4f9ab698f1f280d242ace357bc17865f17ac681b20862c5c66fd22d4c5dae8dff11014b34891c3245d042b2f5b631bce725428691714c841ef  0001-ARM-exynos-boot-mainline-AArch32-on-Galaxy-Note-4-Ex.patch
+bc10fd37d8cc0012cfca6308a975c76e7dbf10aa5f4724318b429a25d6b41f8965369781e13973465a2b0f28b1135513e6b50d8b8fa8763d6065dbb5a02995a0  0002-ARM-exynos-Exynos5433-AArch32-SMP-bring-up-via-SYSRA.patch
+f5ccd164e365e889cabd5aecb55cf76f10b2d7e0b06e861f2a5c43950c4f14dff215cf6228a83da5ce886585fa4d914b76309a36d7b7c443938da571128d34ab  0003-ARM-dts-samsung-add-Galaxy-Note-4-treltexx-Exynos543.patch
+de87890c6e06c520dd43bbb615172b3bcd7e8658b9bfa40bc1af006b07bc59ae599182c154601e03ef36da8865833f784f73820fd84ae648784bb21038413a3a  0004-Input-stmfts-support-firmwares-needing-register-rese.patch
+7fe4bf85a65d1de0dcd8998ff668e98921710efad29610842cfeb9275b7e1cf736023a17695f6053a4668023e6e455a2b87b2bf0818023bd55ca808f60d7411a  0005-power-supply-add-minimal-MAX77843-charger-driver-stm.patch
+2f22c48933fbf5f21622fd324d39016fd32e036c810462604a0d25788a3312d1e24efb8d4149df69e50863c35a288a6a63a6eca7cbf1f6512ee5ed007a7ed6ae  0006-drm-panel-s6e3ha2-pick-touch-hsync-variant-by-panel-.patch
+a3b6ca82ca53b5badcd37c7cfdfdfb5073b76b291d93667990ff842dd45ff1863a9f9ab0b976f1b39f78f5a1bc1b070eda41f0ce16a4c5bc5da2e1458431b591  0007-ARM-compressed-put-Note-4-decompressor-markers-behin.patch
+d482eb47583b5ba4a0f3664aa2ad810cee87fb6804e4edf0c38b2fedb53ee6580bb38ce14fa8f74cebd4d6e4bc028fbc5ce4cdd761f8e00773c98bf5c3d35351  0008-mfd-max77843-don-t-unmask-charger-fuel-gauge-IRQ-sou.patch
+15cab0aa3e16c34a90c8577e7e299e7e70832554903e34ad2dc45f6e01d3aaf08c1cf92a5b8c425d428a50a154cad89076f4b2eb9584df0fef68ccae3298cc6f  0009-ARM-dts-treltexx-Cypress-touchkeys-WM5110-only-sound.patch
+6bb0854f4eeb742edaadf656e5a3a6ac12d329a9b48d0a8b371e7fe94bbb9ee26ce66cce72c605c7d21b60f00d3fbe3fca168d0053d1ad1386135a66f3535bb9  0010-ARM-dts-treltexx-use-the-physical-arch-timer-firmwar.patch
+352d68120b63d659f594e52caf92852cea16d497770514f0aa473b29d7585baa726738918dae5f15880257dfbd0df67dd16010e9ede4537a5bd094dbbf33683d  0011-ARM-dts-treltexx-disable-USB2-LPM-in-gadget-mode-NCM.patch
+370951c70be863509b859758aeb4c7a1187bd73d94bca2593704a1538bb5372d6f5d6ef63ef02a179c0d2209d53c3d1170fdc56c6c0e90e68bccf85f0dafaf14  0012-ARM-dts-treltexx-cap-Mali-T760-at-267-MHz-TM2-OPP-vo.patch
+70e051e0c551601f18510256d42699c307ac69bfc8583e4c1668c9a5b34726ca2e33d7a83a2fd10cd918e15d6cf9807c89541bffb9502b8e729d2bf6480dc8ef  0013-ARM-dts-treltexx-hall-sensor-flip-cover-as-SW_LID.patch
+32619e131232a97d41d55bdc7f102bde35aa946900a8e1c6367e05a8642fff7acf9457235c1a9321a02f0b6cd0e99887cb77c12b07992521dc2558ca15b3401e  0014-ARM-dts-treltexx-Home-and-recent-apps-keys-Super-Pho.patch
+18ea8eb532cbcbae578e74d7fbfefe45aa5a15d4cbeefdbb2afd10ef41028b81509357cc79ee37b475c81ed28954759366e737ca77d9693c152072df960dbbae  0015-clk-samsung-exynos5433-don-t-propagate-GPU-rate-chan.patch
+d6de23ad4e2bb4d66973ca067d7cb8eaecbd5807d8ccc889776ebaaa1478782fb10d3f06f768e7ffac57782943a40af09095ad1cbed9c185074e1fa9e5f8b72a  0016-ARM-dts-treltexx-BCM4773-sensor-hub-CPU-capacities-G.patch
+166dad97dfb2022ebeda3d74fc0b07d64de640169799aa6d25d4c64d7271f9129b3b17c287f8ec7647edc3a351b11cc72f7509d3e5a3799b7313baf920b9523e  config-samsung-treltexx.armv7
+e6bf452596b4b3d60378300d672d99c5bd635b5e98a09efad02b7c83f41d4f479e0dc32e3e65dba45506eb01401b632437464f9f0438a8925822059e68ba69b0  mkdtbh.py
+"

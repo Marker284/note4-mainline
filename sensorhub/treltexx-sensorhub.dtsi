@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Samsung Galaxy Note 4 (SM-N910C, treltexx): BCM4773 GNSS + sensor hub (SSP over BBD)
+ * on SPI0. Proposed fragment; include from exynos5433-treltexx.dts AFTER
+ * exynos5433-tm2-common.dtsi.
+ *
+ * Derived from downstream exynos5433-tre_eur_open_16.dts (spi_0 / "gps" nodes),
+ * exynos5433-t_common.dtsi (ssp-* pin configs) and exynos5433-tre_gpio_13.dtsi
+ * (sleep table), plus drivers/sensorhub/brcm/bbdpl/bcm_gps_spi.c,
+ * drivers/gps/sec_gps_bcm47531.c and drivers/sensorhub/brcm/ssp_dev.c
+ * (universal5433 lineage-18.1).
+ *
+ * Linux 7.3 has no <linux/of_gpio.h>, so the port has to use gpiod. That is why
+ * the legacy "ssp-irq"/"ssp-mcu-req"/"ssp-mcu-resp" phandles become *-gpios
+ * below. The legacy scalar ssp-* properties are kept unchanged, so the ported
+ * ssp_parse_dt() needs no changes.
+ *
+ * Supplies: downstream names no PMIC LDO for the hub. Its VDD comes from an
+ * uncontrolled always-on rail, and the only power control is GPS_HUB_EN
+ * (gpg2-0). Pad I/O is 1.8 V (schematic net names "..._1.8V"). No *-supply
+ * properties are needed.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+&pinctrl_alive {
+	/* gpa3-3  MCU_AP_INT_1 / HOST_REQ: hub -> AP, active high, level IRQ */
+	ssp_irq: ssp-irq-pins {
+		samsung,pins = "gpa3-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR4>;
+	};
+
+	/* gpf2-3 (alive bank: no sleep/PDN config; downstream sleep table OUT0/DOWN)  AP_MCU_INT / MCU_REQ: AP -> hub, output, idle low */
+	ssp_mcu_req: ssp-mcu-req-pins {
+		samsung,pins = "gpf2-3";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR4>;
+	};
+
+	/* gpf2-2 (alive bank; downstream sleep INPUT/UP)  MCU_AP_INT_2 / MCU_RESP: hub -> AP, input, pull-up */
+	ssp_mcu_resp: ssp-mcu-resp-pins {
+		samsung,pins = "gpf2-2";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_INPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR4>;
+	};
+
+	/* gpa1-0  GPS_HOST_WAKE: geofence wake, rising edge (sec_gps_bcm47531.c) */
+	gps_host_wake: gps-host-wake-pins {
+		samsung,pins = "gpa1-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_EINT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR4>;
+	};
+};
+
+&pinctrl_peric {
+	/* gpg2-0  GPS_HUB_EN (nSTANDBY): output, active high, keep level in sleep */
+	ssp_gps_pwr_en: ssp-gps-pwr-en-pins {
+		samsung,pins = "gpg2-0";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_DOWN>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR4>;
+		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_PREV>;
+		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_NONE>;
+	};
+
+	/* gpd8-1  SHUB_SPI_SSN as a plain GPIO chip select (downstream cs-gpio) */
+	spi0_cs: spi0-cs-pins {
+		samsung,pins = "gpd8-1";
+		samsung,pin-function = <EXYNOS_PIN_FUNC_OUTPUT>;
+		samsung,pin-pud = <EXYNOS_PIN_PULL_UP>;
+		samsung,pin-drv = <EXYNOS5433_PIN_DRV_FAST_SR1>;
+		samsung,pin-con-pdn = <EXYNOS_PIN_PDN_OUT1>;
+		samsung,pin-pud-pdn = <EXYNOS_PIN_PULL_UP>;
+	};
+};
+
+/*
+ * SPI0 @ 0x14d20000. tm2-common only aliases it (spi0 = &spi_0); it is
+ * status="disabled" and has no users. spi0_bus = gpd8-0 SCK, gpd6-0 MISO,
+ * gpd6-1 MOSI (func 2, pull-up).
+ * DMA: pdma0 ch 9/8 are inherited. If pl330 (=m) is not loaded, the driver
+ * logs "Failed to get RX DMA channel" and falls back to PIO/IRQ. All
+ * full-duplex BBD frames (<=255 B) fit the 256-byte FIFO anyway.
+ * To force PIO: /delete-property/ dmas; /delete-property/ dma-names;
+ */
+&spi_0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_bus &spi0_cs>;
+	cs-gpios = <&gpd8 1 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	sensorhub: sensorhub@0 {
+		/* "ssp" is not a registered vendor prefix; keep the downstream string so
+		 * the ported driver binds unchanged. */
+		compatible = "ssp,BCM4773";
+		reg = <0>;
+		spi-max-frequency = <26000000>;
+		spi-cpol;			/* SPI mode 3 */
+		spi-cpha;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ssp_irq &ssp_mcu_req &ssp_mcu_resp &ssp_gps_pwr_en
+			     &gps_host_wake>;
+
+		/* HOST_REQ: driver requests it IRQF_TRIGGER_HIGH and also polls the level */
+		interrupts-extended = <&gpa3 3 IRQ_TYPE_LEVEL_HIGH>,
+				      <&gpa1 0 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "host-req", "host-wake";
+		host-req-gpios  = <&gpa3 3 GPIO_ACTIVE_HIGH>;	/* was ssp-irq */
+		mcu-req-gpios   = <&gpf2 3 GPIO_ACTIVE_HIGH>;	/* was ssp-mcu-req, init low */
+		mcu-resp-gpios  = <&gpf2 2 GPIO_ACTIVE_HIGH>;	/* was ssp-mcu-resp */
+		/* was gps{} gpios[0]: downstream drives it low and lets LHD raise it
+		 * via /sys/class/sec/gps/GPS_PWR_EN */
+		enable-gpios    = <&gpg2 0 GPIO_ACTIVE_HIGH>;
+		host-wake-gpios = <&gpa1 0 GPIO_ACTIVE_HIGH>;	/* was gps{} gpios[1] */
+
+		/* Legacy SSP properties, parsed by ssp_parse_dt() and sent to the hub.
+		 * The hub firmware rotates the data itself (MSG2SSP_AP_SENSOR_FORMATION),
+		 * so the output is already in the Android/IIO device frame. */
+		ssp-acc-position = <5>;		/* accel + gyro (ICM20610) */
+		ssp-mag-position = <3>;		/* YAS532 */
+		ssp-sns-combination = <0>;
+		ssp-ap-rev = <1>;
+		ssp-hw-rev = <12>;
+		ssp,prox-hi_thresh = <130>;	/* TMG399x; board .dts overrides t_common 120/55 */
+		ssp,prox-low_thresh = <90>;
+		ssp,prox-cal_hi_thresh = <120>;
+		ssp,prox-cal_low_thresh = <55>;
+		/* YAS532 soft-iron ellipsoid matrix, s16 x 9, 10000 = 1.0. It is sent to
+		 * the hub via MSG2SSP_AP_SET_MAGNETIC_STATIC_MATRIX. It is NOT a mount
+		 * matrix. */
+		ssp-mag-array = <10196 176 (-21) 516 10378 20 (-774) 1027 9454>;
+
+		/* Because the hub already rotates, the IIO mount matrices are identity.
+		 * Only if the port sends position 0 instead (raw chip frame) would these
+		 * apply (Samsung position table, raw -> device; unverified for hub fw):
+		 *   pos 5: "0","1","0";  "1","0","0";  "0","0","-1"
+		 *   pos 3: "0","1","0"; "-1","0","0";  "0","0","1"
+		 */
+		accel-mount-matrix = "1", "0", "0",
+				     "0", "1", "0",
+				     "0", "0", "1";
+		mag-mount-matrix   = "1", "0", "0",
+				     "0", "1", "0",
+				     "0", "0", "1";
+
+		controller-data {
+			samsung,spi-feedback-delay = <0>;
+		};
+	};
+};
+
+/*
+ * tm2-common parks these pins in its pinctrl "initial-state" hogs, which
+ * keeps the SPI0 / sensor-hub pinctrl from claiming them. Hand them over.
+ */
+&initial_alive {
+	/delete-node/ pin-gpa3-3;	/* HOST_REQ */
+	/delete-node/ pin-gpf2-2;	/* MCU_RESP */
+	/delete-node/ pin-gpf2-3;	/* MCU_REQ */
+	/delete-node/ pin-gpa1-0;	/* GPS_HOST_WAKE */
+};
+
+&initial_peric {
+	/delete-node/ pin-gpg2-0;	/* GPS_HUB_EN */
+	/delete-node/ pin-gpd8-1;	/* SPI0 CS */
+};

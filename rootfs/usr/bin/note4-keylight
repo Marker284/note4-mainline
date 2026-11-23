@@ -1,0 +1,12 @@
+#!/bin/sh
+# Touch-key backlight follows the panel: lit while the DSI output is on.
+LED=/sys/class/leds/tm2-touchkey/brightness
+DPMS=/sys/class/drm/card0-DSI-1/dpms
+prev=
+while :; do
+	if [ "$(cat "$DPMS" 2>/dev/null)" = "On" ]; then on=1; else on=0; fi
+	if [ "$on" != "$prev" ]; then
+		echo "$on" > "$LED" 2>/dev/null && prev=$on
+	fi
+	sleep 1
+done

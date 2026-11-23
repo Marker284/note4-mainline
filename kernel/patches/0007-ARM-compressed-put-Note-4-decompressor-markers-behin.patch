@@ -1,0 +1,198 @@
+From a1e53dc4f09436183633614fa44eb42aaa404261 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:16 +0500
+Subject: [PATCH 07/16] ARM: compressed: put Note 4 decompressor markers behind
+ CONFIG_NOTE4_ZIMAGE_MARKS
+
+---
+ arch/arm/boot/compressed/head.S | 42 ++++++++++++++++++++++++++++++++-
+ arch/arm/mach-exynos/Kconfig    |  4 ++++
+ 2 files changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
+index 4b9e8a7bd..c17ac1dcc 100644
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -222,7 +222,9 @@ start:
+ 
+ 		__EFI_HEADER
+ 1:
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1] zImage entry", r3, r4, r5, r6, r10
++#endif
+  ARM_BE8(	setend	be		)	@ go BE8 if compiled for BE8
+  AR_CLASS(	mrs	r9, cpsr	)
+ #ifdef CONFIG_ARM_VIRT_EXT
+@@ -230,18 +232,24 @@ start:
+ #endif
+ 		mov	r7, r1			@ save architecture ID
+ 		mov	r8, r2			@ save atags pointer
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1x] after hyp stub", r3, r4, r5, r6, r10
+ 		and	r3, r9, #0x1f
+ 		cmp	r3, #0x1a
+ 		bne	9101f
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4:      entered in HYP mode", r3, r4, r5, r6, r10
++#endif
+ 		b	9103f
+ 9101:		cmp	r3, #0x13
+ 		bne	9102f
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4:      entered in SVC mode", r3, r4, r5, r6, r10
++#endif
+ 		b	9103f
+ 9102:		note4_mark "note4:      entered in OTHER mode", r3, r4, r5, r6, r10
+ 9103:
++#endif
+ 
+ #ifndef CONFIG_CPU_V7M
+ 		/*
+@@ -259,7 +267,9 @@ not_angel:
+ 		safe_svcmode_maskall r0
+ 		msr	spsr_cxsf, r9		@ Save the CPU boot mode in
+ 						@ SPSR
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1y] in SVC, irqs masked", r3, r4, r5, r6, r10
++#endif
+ #endif
+ 		/*
+ 		 * Note that some cache flushing and other stuff may
+@@ -319,10 +329,14 @@ not_angel:
+ 		add	sp, sp, r1	@ apply relocation
+ 
+ 		/* Validate calculated start against passed DTB */
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_mz
++#endif
+ 		mov	r1, r8
+ 		bl	fdt_check_mem_start
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_mw
++#endif
+ 1:
+ #endif /* CONFIG_USE_OF */
+ 		/* Determine final kernel image address. */
+@@ -337,7 +351,9 @@ not_angel:
+ 		 * Given that r4 > &_end is most unfrequent, we add a rough
+ 		 * additional 1MB of room for a possible appended DTB.
+ 		 */
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_mv
++#endif
+ 		mov	r0, pc
+ 		cmp	r0, r4
+ 		ldrcc	r0, .Lheadroom
+@@ -350,7 +366,9 @@ restart:	adr	r0, LC1
+ 		ldr	sp, [r0]
+ 		ldr	r6, [r0, #4]
+ 		add	sp, sp, r0
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_m0
++#endif
+ 		add	r6, r6, r0
+ 
+ 		get_inflated_image_size	r9, r10, lr
+@@ -649,10 +667,14 @@ not_relocated:	mov	r0, #0
+ 		mov	r0, r4
+ 		mov	r1, sp			@ malloc space above stack
+ 		add	r2, sp, #MALLOC_SIZE	@ 64k max
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_m1
++#endif
+ 		mov	r3, r7
+ 		bl	decompress_kernel
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_m2
++#endif
+ 
+ 		get_inflated_image_size	r1, r2, r3
+ 
+@@ -660,7 +682,9 @@ not_relocated:	mov	r0, #0
+ 		add	r1, r1, r0		@ end of inflated image
+ 		bl	cache_clean_flush
+ 		bl	cache_off
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		bl	note4_m3
++#endif
+ 
+ #ifdef CONFIG_ARM_VIRT_EXT
+ 		mrs	r0, spsr		@ Get saved CPU boot mode
+@@ -1454,7 +1478,9 @@ __hyp_reentry_vectors:
+ #endif /* CONFIG_ARM_VIRT_EXT */
+ 
+ __enter_kernel:
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [2] decompressed, jumping to kernel", r0, r1, r2, r3, r5
++#endif
+ 		mov	r0, #0			@ must be 0
+ 		mov	r1, r7			@ restore architecture number
+ 		mov	r2, r8			@ restore atags pointer
+@@ -1462,34 +1488,48 @@ __enter_kernel:
+  M_CLASS(	add	r4, r4, #1	)	@ enter in Thumb mode for M class
+  THUMB(		bx	r4		)	@ entry point is always ARM for A/R classes
+ 
+-#ifdef CONFIG_NOTE4_SECLOG
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ note4_mz:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1z] stack ok, calling fdt_check_mem_start", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_mw:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1w] fdt_check_mem_start returned", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_mv:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1v] calling cache_on", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_m0:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1a] restart (cache_on done)", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_m1:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1b] calling decompress_kernel", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_m2:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1c] decompress_kernel returned", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ note4_m3:
+ 		stmfd	sp!, {r0 - r12, lr}
++#ifdef CONFIG_NOTE4_ZIMAGE_MARKS
+ 		note4_mark "note4: [1d] caches off", r3, r4, r5, r6, r10
++#endif
+ 		ldmfd	sp!, {r0 - r12, pc}
+ #endif
+ reloc_code_end:
+diff --git a/arch/arm/mach-exynos/Kconfig b/arch/arm/mach-exynos/Kconfig
+index bc46bd88b..908926cbf 100644
+--- a/arch/arm/mach-exynos/Kconfig
++++ b/arch/arm/mach-exynos/Kconfig
+@@ -107,6 +107,10 @@ config NOTE4_SMP
+ 	depends on SOC_EXYNOS5433 && SMP
+ 	default y
+ 
++config NOTE4_ZIMAGE_MARKS
++	bool "Galaxy Note 4: sec_log progress markers in the zImage decompressor"
++	depends on NOTE4_SECLOG
++
+ config NOTE4_SECLOG
+ 	bool "Galaxy Note 4: mirror printk into Samsung sec_log (last_kmsg)"
+ 	depends on SOC_EXYNOS5433
+-- 
+2.56.0
+

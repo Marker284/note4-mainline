@@ -1,0 +1,67 @@
+#!/bin/busybox sh
+# Note 4 (treltexx) mainline debug initramfs.
+# USB: NCM/RNDIS gadget, phone = 172.16.42.1, telnet on :23 (no password).
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin
+
+mkdir -p /proc /sys /dev /tmp /config /sys/fs/pstore /mnt
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+mount -t configfs configfs /config 2>/dev/null || mount -t configfs configfs /sys/kernel/config
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+
+log() { echo "[note4-init] $*" > /dev/kmsg; echo "[note4-init] $*" > /dev/tty0 2>/dev/null; }
+log "userspace alive, kernel $(uname -r)"
+
+# --- USB gadget --------------------------------------------------------
+G=/config/usb_gadget/g1
+[ -d /config/usb_gadget ] || G=/sys/kernel/config/usb_gadget/g1
+setup_gadget() {
+	mkdir -p $G || return 1
+	echo 0x18D1 > $G/idVendor
+	echo 0xD001 > $G/idProduct
+	mkdir -p $G/strings/0x409
+	echo "postmarketOS-ish" > $G/strings/0x409/manufacturer
+	echo "Note4 mainline debug" > $G/strings/0x409/product
+	echo "treltexx" > $G/strings/0x409/serialnumber
+	mkdir -p $G/functions/ncm.usb0 $G/functions/acm.usb0
+	mkdir -p $G/configs/c.1/strings/0x409
+	echo "ncm+acm" > $G/configs/c.1/strings/0x409/configuration
+	ln -s $G/functions/ncm.usb0 $G/configs/c.1/ 2>/dev/null
+	ln -s $G/functions/acm.usb0 $G/configs/c.1/ 2>/dev/null
+	i=0
+	while [ -z "$(ls /sys/class/udc 2>/dev/null)" ] && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
+	UDC=$(ls /sys/class/udc | head -n1)
+	[ -n "$UDC" ] || { log "no UDC found"; return 1; }
+	echo "$UDC" > $G/UDC && log "gadget bound to $UDC"
+}
+setup_gadget || log "gadget setup FAILED"
+
+IF=$(cat $G/functions/ncm.usb0/ifname 2>/dev/null); [ -n "$IF" ] || IF=usb0
+ifconfig lo 127.0.0.1 up
+ifconfig "$IF" 172.16.42.1 netmask 255.255.255.0 up && log "$IF up 172.16.42.1"
+cat > /tmp/udhcpd.conf <<CONF
+start 172.16.42.2
+end 172.16.42.2
+interface $IF
+option subnet 255.255.255.0
+CONF
+touch /tmp/udhcpd.leases
+udhcpd /tmp/udhcpd.conf
+telnetd -l /bin/sh -p 23 && log "telnetd on 172.16.42.1:23"
+
+# serial console over the ACM function as a fallback
+( while :; do [ -c /dev/ttyGS0 ] && getty -n -l /bin/sh 115200 ttyGS0; sleep 2; done ) &
+
+# keep a copy of the boot log
+dmesg > /tmp/dmesg.boot
+log "ready. ssh-less: telnet 172.16.42.1"
+
+# shell on the screen console too
+while :; do
+	setsid sh -c 'exec sh </dev/tty1 >/dev/tty1 2>&1' 2>/dev/null || sleep 5
+	sleep 1
+done

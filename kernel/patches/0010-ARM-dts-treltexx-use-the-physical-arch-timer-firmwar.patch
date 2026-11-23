@@ -1,0 +1,34 @@
+From 5b06b26dd6831deb53aecf5677ffe86615fa1d10 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:17 +0500
+Subject: [PATCH 10/16] ARM: dts: treltexx: use the physical arch timer
+ (firmware leaves CNTVOFF unset on secondaries)
+
+---
+ arch/arm/boot/dts/samsung/exynos5433-treltexx.dts | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index 9895a7056..7917da72b 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -164,6 +164,16 @@ &cpu7 {
+ 	i2s-controller = <&i2s0 0>;
+ };
+ 
++/*
++ * Samsung's Android firmware does not program CNTVOFF on the secondary
++ * cores, so the virtual counters of the 8 CPUs disagree by thousands of
++ * seconds (wild printk timestamps, 1 s ping RTT, stalls). Use the global
++ * physical counter instead.
++ */
++&timer {
++	arm,cpu-registers-not-fw-configured;
++};
++
+ &cmu_disp {
+ 	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
+ 	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
+-- 
+2.56.0
+

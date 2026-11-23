@@ -1,0 +1,39 @@
+Module                  Size  Used by
+rfkill                 24576  4
+ntc_thermistor         16384  0
+hwmon                  28672  1 ntc_thermistor
+aes_arm_ce             20480  0
+pl330                  24576  2
+s5p_jpeg               40960  0
+s5p_mfc               139264  0
+max77693_haptic        12288  0
+ff_memless             12288  1 max77693_haptic
+arizona_ldo1           12288  0
+pwm_samsung            12288  1
+snd_soc_i2s            20480  0
+arizona                61440  0
+snd_soc_idma           12288  1 snd_soc_i2s
+snd_soc_s3c_dma        12288  1 snd_soc_i2s
+exynos_adc             12288  0
+exynos_gsc             32768  0
+v4l2_mem2mem           24576  2 s5p_jpeg,exynos_gsc
+videobuf2_v4l2         20480  4 s5p_jpeg,s5p_mfc,exynos_gsc,v4l2_mem2mem
+videobuf2_dma_contig    16384  3 s5p_jpeg,s5p_mfc,exynos_gsc
+videobuf2_memops       12288  1 videobuf2_dma_contig
+industrialio           73728  2 exynos_adc,ntc_thermistor
+videobuf2_common       49152  7 s5p_jpeg,videobuf2_dma_contig,s5p_mfc,exynos_gsc,videobuf2_memops,v4l2_mem2mem,videobuf2_v4l2
+videodev              225280  5 s5p_jpeg,s5p_mfc,exynos_gsc,v4l2_mem2mem,videobuf2_v4l2
+gpu_sched              45056  0
+drm_shmem_helper       20480  0
+governor_passive       12288  0
+mc                     45056  4 videobuf2_common,videodev,v4l2_mem2mem,videobuf2_v4l2
+governor_simpleondemand    12288  0
+exynos_bus             12288  0
+clk_exynos_clkout      12288  0
+exynos_ppmu            16384  0
+sch_fq_codel           16384  1
+nft_reject_inet        12288  1
+nft_reject             12288  1 nft_reject_inet
+nf_reject_ipv6         16384  1 nft_reject_inet
+nf_reject_ipv4         12288  1 nft_reject_inet
+nft_ct                 16384  3

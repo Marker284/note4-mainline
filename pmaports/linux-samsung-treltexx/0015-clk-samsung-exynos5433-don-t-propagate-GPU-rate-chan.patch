@@ -1,0 +1,107 @@
+From 7837e6c4dbec97a931a3c3f8adbc8d7fe755b51b Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:19 +0500
+Subject: [PATCH 15/16] clk: samsung: exynos5433: don't propagate GPU rate
+ changes to G3D_PLL
+
+Re-locking G3D_PLL from devfreq while the GPU and its bus clocks run hangs
+the SoC (Galaxy Note 4). Pin the PLL to 800 MHz at probe and scale ACLK_G3D
+with the divider only: 160/200/267/400 MHz.
+---
+ .../boot/dts/samsung/exynos5433-treltexx.dts  | 35 +++++++++++++++++--
+ drivers/clk/samsung/clk-exynos5433.c          | 18 ++++++----
+ 2 files changed, 44 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index 1fe69bf9a..56cfe4d3c 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -199,17 +199,46 @@ &usbdrd_dwc3 {
+ };
+ 
+ /*
+- * Mali-T760: the TM2 OPP voltages are too low for this silicon above
+- * 267 MHz (350 MHz @ 1.025 V hangs the whole SoC). Keep the proven-stable
+- * steps until per-ASV voltages from the vendor tables are wired up.
++ * Mali-T760 DVFS: G3D_PLL stays at the 800 MHz S-Boot programs and only the
++ * ACLK_G3D divider changes (re-locking the PLL at runtime hangs the SoC), so
++ * offer the rates reachable as 800 MHz / n. Voltages follow the mainline
++ * table (above the vendor ASV values for this chip).
+  */
++/* S-Boot leaves G3D_PLL at 266 MHz: set it once at probe, GPU still idle */
++&cmu_g3d {
++	assigned-clocks = <&cmu_g3d CLK_FOUT_G3D_PLL>;
++	assigned-clock-rates = <800000000>;
++};
++
+ &gpu_opp_table {
++	/delete-node/ opp-160000000;
++	/delete-node/ opp-267000000;
+ 	/delete-node/ opp-350000000;
+ 	/delete-node/ opp-420000000;
+ 	/delete-node/ opp-500000000;
+ 	/delete-node/ opp-550000000;
+ 	/delete-node/ opp-600000000;
+ 	/delete-node/ opp-700000000;
++
++	opp-160000000 {
++		opp-hz = /bits/ 64 <160000000>;
++		opp-microvolt = <1000000>;
++	};
++
++	opp-200000000 {
++		opp-hz = /bits/ 64 <200000000>;
++		opp-microvolt = <1000000>;
++	};
++
++	opp-266666666 {
++		opp-hz = /bits/ 64 <266666666>;
++		opp-microvolt = <1000000>;
++	};
++
++	opp-400000000 {
++		opp-hz = /bits/ 64 <400000000>;
++		opp-microvolt = <1025000>;
++	};
+ };
+ 
+ /* Home button opens/closes the Phosh overview (Super) */
+diff --git a/drivers/clk/samsung/clk-exynos5433.c b/drivers/clk/samsung/clk-exynos5433.c
+index 6bc64e446..515aea07e 100644
+--- a/drivers/clk/samsung/clk-exynos5433.c
++++ b/drivers/clk/samsung/clk-exynos5433.c
+@@ -3301,10 +3301,16 @@ static const struct samsung_pll_clock g3d_pll_clks[] __initconst = {
+ 
+ static const struct samsung_mux_clock g3d_mux_clks[] __initconst = {
+ 	/* MUX_SEL_G3D */
+-	MUX_F(CLK_MOUT_ACLK_G3D_400, "mout_aclk_g3d_400", mout_aclk_g3d_400_p,
+-			MUX_SEL_G3D, 8, 1, CLK_SET_RATE_PARENT, 0),
+-	MUX_F(CLK_MOUT_G3D_PLL, "mout_g3d_pll", mout_g3d_pll_p,
+-			MUX_SEL_G3D, 0, 1, CLK_SET_RATE_PARENT, 0),
++	/*
++	 * No CLK_SET_RATE_PARENT on the GPU path: re-locking G3D_PLL while the
++	 * GPU and its bus clocks (aclk_g3dnd/BTS/async bridges) run hangs the
++	 * whole SoC. GPU DVFS only touches div_aclk_g3d; the PLL keeps the
++	 * rate the bootloader or assigned-clock-rates chose.
++	 */
++	MUX(CLK_MOUT_ACLK_G3D_400, "mout_aclk_g3d_400", mout_aclk_g3d_400_p,
++			MUX_SEL_G3D, 8, 1),
++	MUX(CLK_MOUT_G3D_PLL, "mout_g3d_pll", mout_g3d_pll_p,
++			MUX_SEL_G3D, 0, 1),
+ };
+ 
+ static const struct samsung_div_clock g3d_div_clks[] __initconst = {
+@@ -3313,8 +3319,8 @@ static const struct samsung_div_clock g3d_div_clks[] __initconst = {
+ 			8, 2),
+ 	DIV(CLK_DIV_PCLK_G3D, "div_pclk_g3d", "div_aclk_g3d", DIV_G3D,
+ 			4, 3),
+-	DIV_F(CLK_DIV_ACLK_G3D, "div_aclk_g3d", "mout_aclk_g3d_400", DIV_G3D,
+-			0, 3, CLK_SET_RATE_PARENT, 0),
++	DIV(CLK_DIV_ACLK_G3D, "div_aclk_g3d", "mout_aclk_g3d_400", DIV_G3D,
++			0, 3),
+ };
+ 
+ static const struct samsung_gate_clock g3d_gate_clks[] __initconst = {
+-- 
+2.56.0
+

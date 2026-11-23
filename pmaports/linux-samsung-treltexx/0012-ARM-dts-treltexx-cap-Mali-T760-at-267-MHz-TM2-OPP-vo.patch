@@ -1,0 +1,38 @@
+From e718c1eeda18a7b7ec19959e9c885f85ca2d1587 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:18 +0500
+Subject: [PATCH 12/16] ARM: dts: treltexx: cap Mali-T760 at 267 MHz (TM2 OPP
+ voltages hang this silicon)
+
+---
+ arch/arm/boot/dts/samsung/exynos5433-treltexx.dts | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index cf70c118b..e30552619 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -183,6 +183,20 @@ &usbdrd_dwc3 {
+ 	snps,usb2-gadget-lpm-disable;
+ };
+ 
++/*
++ * Mali-T760: the TM2 OPP voltages are too low for this silicon above
++ * 267 MHz (350 MHz @ 1.025 V hangs the whole SoC). Keep the proven-stable
++ * steps until per-ASV voltages from the vendor tables are wired up.
++ */
++&gpu_opp_table {
++	/delete-node/ opp-350000000;
++	/delete-node/ opp-420000000;
++	/delete-node/ opp-500000000;
++	/delete-node/ opp-550000000;
++	/delete-node/ opp-600000000;
++	/delete-node/ opp-700000000;
++};
++
+ &cmu_disp {
+ 	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
+ 	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
+-- 
+2.56.0
+

@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# Galaxy Note 4 (Exynos 5433) Broadcom BCM4773 sensor hub, out of tree.
+#
+#   bbd.ko      Broadcom bridge driver (/dev/bbd_*), transport layer,
+#               SSI-SPI driver for "ssp,BCM4773", /dev/ttyBCM0
+#   ssp_bbd.ko  Samsung SSP protocol on top of BBD + IIO devices
+#               (binds to the "bbd-ssp" child device created by bbd.ko)
+
+obj-m += bbd.o ssp_bbd.o
+
+bbd-y := \
+	bbdpl/bbd_main.o \
+	bbdpl/bbd_common.o \
+	bbdpl/bbd_control.o \
+	bbdpl/bbd_packet.o \
+	bbdpl/bbd_reliable.o \
+	bbdpl/bbd_sensor.o \
+	bbdpl/bbd_sysfs.o \
+	bbdpl/bbd_ssi_spi.o \
+	bbdpl/bbd_patch.o \
+	bbdpl/bcm_gps_spi.o \
+	bbdpl/transport/bbd_bridge_c.o \
+	bbdpl/transport/bbd_engine.o \
+	bbdpl/transport/bbd_packet_layer_c.o \
+	bbdpl/transport/transport_layer_c.o \
+	bbdpl/utils/crc8bits_c.o \
+	bbdpl/utils/ring_buffer_c.o \
+	bbdpl/utils/stream_codec_c.o
+
+ssp_bbd-y := \
+	ssp_dev.o \
+	ssp_bbd_link.o \
+	ssp_i2c.o \
+	ssp_data.o \
+	ssp_sysfs.o \
+	ssp_debug.o \
+	ssp_calib.o \
+	ssp_iio.o
+
+# Optional: compile the patch into bbd.ko like downstream did
+#   make ... BBD_EMBED_PATCH=/path/to/bbd_patch_file.h
+ifneq ($(BBD_EMBED_PATCH),)
+CFLAGS_bbd_patch.o += -DBBD_EMBED_PATCH='"$(BBD_EMBED_PATCH)"'
+endif
+
+# downstream code style; keep the noise down
+ccflags-y += -Wno-unused-function -Wno-declaration-after-statement

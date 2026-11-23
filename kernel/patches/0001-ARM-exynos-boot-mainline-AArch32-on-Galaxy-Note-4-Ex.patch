@@ -1,0 +1,519 @@
+From 11ec1408d44cb189bbb7fba7ebc0eb1de386826c Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:14 +0500
+Subject: [PATCH 01/16] ARM: exynos: boot mainline AArch32 on Galaxy Note 4
+ (Exynos5433)
+
+- allow Exynos5433 clk/pinctrl drivers on 32-bit ARM (SOC_EXYNOS5433)
+- note4-seclog: mirror printk into Samsung sec_log (last_kmsg)
+- early asm markers into sec_log, map sec_log in early page tables
+---
+ arch/arm/boot/compressed/head.S     | 53 ++++++++++++++++
+ arch/arm/boot/dts/samsung/Makefile  |  2 +
+ arch/arm/include/asm/note4-mark.h   | 61 +++++++++++++++++++
+ arch/arm/kernel/head-common.S       |  1 +
+ arch/arm/kernel/head.S              | 28 ++++++++-
+ arch/arm/kernel/setup.c             |  6 ++
+ arch/arm/mach-exynos/Kconfig        | 22 +++++++
+ arch/arm/mach-exynos/Makefile       |  2 +
+ arch/arm/mach-exynos/note4-seclog.c | 93 +++++++++++++++++++++++++++++
+ drivers/clk/samsung/Kconfig         |  1 +
+ drivers/pinctrl/samsung/Kconfig     |  1 +
+ 11 files changed, 269 insertions(+), 1 deletion(-)
+ create mode 100644 arch/arm/include/asm/note4-mark.h
+ create mode 100644 arch/arm/mach-exynos/note4-seclog.c
+
+diff --git a/arch/arm/boot/compressed/head.S b/arch/arm/boot/compressed/head.S
+index 9f406e9c0..4b9e8a7bd 100644
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -8,6 +8,7 @@
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+ #include <asm/v7m.h>
++#include <asm/note4-mark.h>
+ 
+ #include "efi-header.S"
+ 
+@@ -221,6 +222,7 @@ start:
+ 
+ 		__EFI_HEADER
+ 1:
++		note4_mark "note4: [1] zImage entry", r3, r4, r5, r6, r10
+  ARM_BE8(	setend	be		)	@ go BE8 if compiled for BE8
+  AR_CLASS(	mrs	r9, cpsr	)
+ #ifdef CONFIG_ARM_VIRT_EXT
+@@ -228,6 +230,18 @@ start:
+ #endif
+ 		mov	r7, r1			@ save architecture ID
+ 		mov	r8, r2			@ save atags pointer
++		note4_mark "note4: [1x] after hyp stub", r3, r4, r5, r6, r10
++		and	r3, r9, #0x1f
++		cmp	r3, #0x1a
++		bne	9101f
++		note4_mark "note4:      entered in HYP mode", r3, r4, r5, r6, r10
++		b	9103f
++9101:		cmp	r3, #0x13
++		bne	9102f
++		note4_mark "note4:      entered in SVC mode", r3, r4, r5, r6, r10
++		b	9103f
++9102:		note4_mark "note4:      entered in OTHER mode", r3, r4, r5, r6, r10
++9103:
+ 
+ #ifndef CONFIG_CPU_V7M
+ 		/*
+@@ -245,6 +259,7 @@ not_angel:
+ 		safe_svcmode_maskall r0
+ 		msr	spsr_cxsf, r9		@ Save the CPU boot mode in
+ 						@ SPSR
++		note4_mark "note4: [1y] in SVC, irqs masked", r3, r4, r5, r6, r10
+ #endif
+ 		/*
+ 		 * Note that some cache flushing and other stuff may
+@@ -304,8 +319,10 @@ not_angel:
+ 		add	sp, sp, r1	@ apply relocation
+ 
+ 		/* Validate calculated start against passed DTB */
++		bl	note4_mz
+ 		mov	r1, r8
+ 		bl	fdt_check_mem_start
++		bl	note4_mw
+ 1:
+ #endif /* CONFIG_USE_OF */
+ 		/* Determine final kernel image address. */
+@@ -320,6 +337,7 @@ not_angel:
+ 		 * Given that r4 > &_end is most unfrequent, we add a rough
+ 		 * additional 1MB of room for a possible appended DTB.
+ 		 */
++		bl	note4_mv
+ 		mov	r0, pc
+ 		cmp	r0, r4
+ 		ldrcc	r0, .Lheadroom
+@@ -332,6 +350,7 @@ restart:	adr	r0, LC1
+ 		ldr	sp, [r0]
+ 		ldr	r6, [r0, #4]
+ 		add	sp, sp, r0
++		bl	note4_m0
+ 		add	r6, r6, r0
+ 
+ 		get_inflated_image_size	r9, r10, lr
+@@ -630,8 +649,10 @@ not_relocated:	mov	r0, #0
+ 		mov	r0, r4
+ 		mov	r1, sp			@ malloc space above stack
+ 		add	r2, sp, #MALLOC_SIZE	@ 64k max
++		bl	note4_m1
+ 		mov	r3, r7
+ 		bl	decompress_kernel
++		bl	note4_m2
+ 
+ 		get_inflated_image_size	r1, r2, r3
+ 
+@@ -639,6 +660,7 @@ not_relocated:	mov	r0, #0
+ 		add	r1, r1, r0		@ end of inflated image
+ 		bl	cache_clean_flush
+ 		bl	cache_off
++		bl	note4_m3
+ 
+ #ifdef CONFIG_ARM_VIRT_EXT
+ 		mrs	r0, spsr		@ Get saved CPU boot mode
+@@ -1432,6 +1454,7 @@ __hyp_reentry_vectors:
+ #endif /* CONFIG_ARM_VIRT_EXT */
+ 
+ __enter_kernel:
++		note4_mark "note4: [2] decompressed, jumping to kernel", r0, r1, r2, r3, r5
+ 		mov	r0, #0			@ must be 0
+ 		mov	r1, r7			@ restore architecture number
+ 		mov	r2, r8			@ restore atags pointer
+@@ -1439,6 +1462,36 @@ __enter_kernel:
+  M_CLASS(	add	r4, r4, #1	)	@ enter in Thumb mode for M class
+  THUMB(		bx	r4		)	@ entry point is always ARM for A/R classes
+ 
++#ifdef CONFIG_NOTE4_SECLOG
++note4_mz:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1z] stack ok, calling fdt_check_mem_start", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_mw:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1w] fdt_check_mem_start returned", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_mv:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1v] calling cache_on", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_m0:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1a] restart (cache_on done)", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_m1:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1b] calling decompress_kernel", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_m2:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1c] decompress_kernel returned", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++note4_m3:
++		stmfd	sp!, {r0 - r12, lr}
++		note4_mark "note4: [1d] caches off", r3, r4, r5, r6, r10
++		ldmfd	sp!, {r0 - r12, pc}
++#endif
+ reloc_code_end:
+ 
+ #ifdef CONFIG_EFI_STUB
+diff --git a/arch/arm/boot/dts/samsung/Makefile b/arch/arm/boot/dts/samsung/Makefile
+index e0143ee8c..00234427c 100644
+--- a/arch/arm/boot/dts/samsung/Makefile
++++ b/arch/arm/boot/dts/samsung/Makefile
+@@ -34,6 +34,7 @@ dtb-$(CONFIG_ARCH_EXYNOS5) += \
+ 	exynos5260-xyref5260.dtb \
+ 	exynos5410-odroidxu.dtb \
+ 	exynos5410-smdk5410.dtb \
++	exynos5433-treltexx.dtb \
+ 	exynos5420-arndale-octa.dtb \
+ 	exynos5420-peach-pit.dtb \
+ 	exynos5420-smdk5420.dtb \
+@@ -56,3 +57,4 @@ dtb-$(CONFIG_ARCH_S5PV210) += \
+ 	s5pv210-smdkc110.dtb \
+ 	s5pv210-smdkv210.dtb \
+ 	s5pv210-torbreck.dtb
++DTC_FLAGS_exynos5433-treltexx := -p 4096
+diff --git a/arch/arm/include/asm/note4-mark.h b/arch/arm/include/asm/note4-mark.h
+new file mode 100644
+index 000000000..0f2e3f3e0
+--- /dev/null
++++ b/arch/arm/include/asm/note4-mark.h
+@@ -0,0 +1,61 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Galaxy Note 4 bring-up: append a string to Samsung's sec_log ring
++ * (magic "LOGM" @0x25fffff8, ptr @0x25fffffc, 2 MiB ring @0x26000000)
++ * using physical addresses. Only valid with the MMU off.
++ * Clobbers the five scratch registers passed in; no stack, no literals.
++ */
++#ifndef __ASM_NOTE4_MARK_H
++#define __ASM_NOTE4_MARK_H
++
++#ifdef CONFIG_NOTE4_SECLOG
++	.macro	note4_mark msg, rh, rp, rc, rt, rm, hi=0x25ff
++	movw	\rh, #0xfff8
++	movt	\rh, #\hi			@ \rh = &magic
++	movw	\rm, #0x4f4c
++	movt	\rm, #0x4d47			@ "LOGM"
++	ldr	\rc, [\rh]
++	cmp	\rc, \rm
++	movne	\rp, #0
++	strne	\rm, [\rh]
++	strne	\rp, [\rh, #4]
++	ldr	\rp, [\rh, #4]			@ write pointer
++	movw	\rm, #0xffff
++	movt	\rm, #0x001f			@ ring mask
++	adr	\rt, 9997f
++9998:	ldrb	\rc, [\rt], #1
++	cmp	\rc, #0
++	beq	9999f
++	push_mark_byte \rh, \rp, \rc, \rm
++	b	9998b
++9997:	.asciz	"\msg\n"
++	.align	2
++9999:	str	\rp, [\rh, #4]
++	dsb
++	mcr	p15, 0, \rh, c7, c10, 1	@ DCCMVAC: clean header line
++	dsb
++	.endm
++
++	/* store byte \rc at ring[\rp & mask], advance \rp; \rh is preserved */
++	.macro	push_mark_byte rh, rp, rc, rm
++	add	\rh, \rh, #8			@ \rh -> ring base
++	push_mark_store \rh, \rp, \rc, \rm
++	sub	\rh, \rh, #8
++	add	\rp, \rp, #1
++	.endm
++
++	.macro	push_mark_store base, rp, rc, rm
++	and	\rm, \rp, \rm			@ \rm = pos (mask restored below)
++	add	\rm, \base, \rm		@ \rm = byte address
++	strb	\rc, [\rm]
++	dsb
++	mcr	p15, 0, \rm, c7, c10, 1	@ DCCMVAC: push it to RAM
++	movw	\rm, #0xffff
++	movt	\rm, #0x001f
++	.endm
++#else
++	.macro	note4_mark msg, rh, rp, rc, rt, rm, hi=0x25ff
++	.endm
++#endif
++
++#endif
+diff --git a/arch/arm/kernel/head-common.S b/arch/arm/kernel/head-common.S
+index 42cae73fc..217ed7d48 100644
+--- a/arch/arm/kernel/head-common.S
++++ b/arch/arm/kernel/head-common.S
+@@ -79,6 +79,7 @@ __mmap_switched:
+ 	mov	r7, r1
+ 	mov	r8, r2
+ 	mov	r10, r0
++	note4_mark "note4: [3c] MMU on, in __mmap_switched", r0, r1, r2, r3, r4, 0xc5ff
+ 
+ 	adr	r4, __mmap_switched_data
+ 	mov	fp, #0
+diff --git a/arch/arm/kernel/head.S b/arch/arm/kernel/head.S
+index a22403a62..d613d007d 100644
+--- a/arch/arm/kernel/head.S
++++ b/arch/arm/kernel/head.S
+@@ -13,6 +13,7 @@
+ #include <linux/pgtable.h>
+ 
+ #include <asm/assembler.h>
++#include <asm/note4-mark.h>
+ #include <asm/cp15.h>
+ #include <asm/domain.h>
+ #include <asm/ptrace.h>
+@@ -92,6 +93,7 @@ kernel_sec_end:
+ 	__HEAD
+ ENTRY(stext)
+  ARM_BE8(setend	be )			@ ensure we are in BE8 mode
++	note4_mark "note4: [3] kernel stext", r3, r4, r5, r6, r10
+ 
+  THUMB(	badr	r9, 1f		)	@ Kernel is always entered in ARM.
+  THUMB(	bx	r9		)	@ If this is a Thumb-2 kernel,
+@@ -107,6 +109,10 @@ ENTRY(stext)
+ 	mrc	p15, 0, r9, c0, c0		@ get processor id
+ 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
+ 	movs	r10, r5				@ invalid processor (r5=0)?
++	bne	1001f
++	note4_mark "note4: [!] unknown processor id", r3, r4, r5, r6, r10
++	mov	r5, #0
++1001:
+  THUMB( it	eq )		@ force fixup-able long branch encoding
+ 	beq	__error_p			@ yes, error 'p'
+ 
+@@ -137,6 +143,7 @@ ENTRY(stext)
+ 	bl	__fixup_pv_table
+ #endif
+ 	bl	__create_page_tables
++	note4_mark "note4: [3a] page tables created", r0, r3, r5, r6, r7
+ 
+ 	/*
+ 	 * The following calls CPU specific code in a position independent
+@@ -169,7 +176,8 @@ ENTRY(stext)
+ 	ldr	r12, [r10, #PROCINFO_INITFUNC]
+ 	add	r12, r12, r10
+ 	ret	r12
+-1:	b	__enable_mmu
++1:	note4_mark "note4: [3b] cpu init done, enabling MMU", r3, r5, r6, r7, r10
++	b	__enable_mmu
+ ENDPROC(stext)
+ 	.ltorg
+ 
+@@ -308,6 +316,24 @@ __create_page_tables:
+ 	addne	r6, r6, #1 << SECTION_SHIFT
+ 	strne	r6, [r3]
+ 
++#ifdef CONFIG_NOTE4_SECLOG
++	/*
++	 * Note 4: map the sec_log ring (phys 0x25f00000-0x26200000) at its
++	 * linear address so early markers/printk can use it with the MMU on.
++	 * Assumes PHYS_OFFSET 0x20000000 / PAGE_OFFSET 0xc0000000.
++	 */
++	movw	r0, #((PAGE_OFFSET + 0x05f00000) >> (SECTION_SHIFT - PMD_ENTRY_ORDER)) & 0xffff
++	add	r0, r0, r4
++	movw	r6, #0
++	movt	r6, #0x25f0
++	orr	r6, r6, r7
++	str	r6, [r0], #1 << PMD_ENTRY_ORDER
++	add	r6, r6, #1 << SECTION_SHIFT
++	str	r6, [r0], #1 << PMD_ENTRY_ORDER
++	add	r6, r6, #1 << SECTION_SHIFT
++	str	r6, [r0]
++#endif
++
+ #if defined(CONFIG_ARM_LPAE) && defined(CONFIG_CPU_ENDIAN_BE8)
+ 	sub	r4, r4, #4			@ Fixup page table pointer
+ 						@ for 64-bit descriptors
+diff --git a/arch/arm/kernel/setup.c b/arch/arm/kernel/setup.c
+index 0bfd66c7a..3576d7cb9 100644
+--- a/arch/arm/kernel/setup.c
++++ b/arch/arm/kernel/setup.c
+@@ -1102,6 +1102,12 @@ void __init setup_arch(char **cmdline_p)
+ 		atags_vaddr = FDT_VIRT_BASE(__atags_pointer);
+ 
+ 	setup_processor();
++#ifdef CONFIG_NOTE4_SECLOG
++	{
++		extern void __init note4_seclog_init(void);
++		note4_seclog_init();
++	}
++#endif
+ 	if (atags_vaddr) {
+ 		mdesc = setup_machine_fdt(atags_vaddr);
+ 		if (mdesc)
+diff --git a/arch/arm/mach-exynos/Kconfig b/arch/arm/mach-exynos/Kconfig
+index b3d5df522..7d10da032 100644
+--- a/arch/arm/mach-exynos/Kconfig
++++ b/arch/arm/mach-exynos/Kconfig
+@@ -88,6 +88,28 @@ config SOC_EXYNOS4412
+ 	default y
+ 	depends on ARCH_EXYNOS4
+ 
++config SOC_EXYNOS5433
++	bool "Samsung Exynos5433 (AArch32 mode)"
++	default y
++	depends on ARCH_EXYNOS5
++	select ARM_ARCH_TIMER
++	help
++	  Exynos5433 (Cortex-A57/A53) running in AArch32 state, as left by
++	  the Samsung Android bootloader (S-Boot) on e.g. the Galaxy Note 4
++	  (SM-N910C/H). The SoC itself is described by the arm64 DTS.
++
++config NOTE4_BOOT_PROBE
++	bool "Galaxy Note 4: paint S-Boot framebuffer red in zImage entry"
++	depends on SOC_EXYNOS5433
++
++config NOTE4_SECLOG
++	bool "Galaxy Note 4: mirror printk into Samsung sec_log (last_kmsg)"
++	depends on SOC_EXYNOS5433
++	help
++	  Writes the kernel log into the "LOGM" ring buffer at 0x26000000
++	  that S-Boot and the stock/recovery kernel expose as
++	  /proc/last_kmsg, so logs survive a warm reset into recovery.
++
+ config SOC_EXYNOS5250
+ 	bool "Samsung Exynos5250"
+ 	default y
+diff --git a/arch/arm/mach-exynos/Makefile b/arch/arm/mach-exynos/Makefile
+index 53fa363c8..1ec02e81b 100644
+--- a/arch/arm/mach-exynos/Makefile
++++ b/arch/arm/mach-exynos/Makefile
+@@ -12,3 +12,5 @@ obj-$(CONFIG_SMP)		+= platsmp.o headsmp.o
+ 
+ obj-$(CONFIG_EXYNOS_MCPM)	+= mcpm-exynos.o
+ CFLAGS_mcpm-exynos.o		+= -march=armv7-a
++
++obj-$(CONFIG_NOTE4_SECLOG) += note4-seclog.o
+diff --git a/arch/arm/mach-exynos/note4-seclog.c b/arch/arm/mach-exynos/note4-seclog.c
+new file mode 100644
+index 000000000..6964427d8
+--- /dev/null
++++ b/arch/arm/mach-exynos/note4-seclog.c
+@@ -0,0 +1,93 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Galaxy Note 4 (Exynos5433, AArch32) bring-up console.
++ *
++ * Samsung S-Boot keeps a "LOGM" ring buffer at sec_log=0x200000@0x26000000:
++ *   *(u32 *)(base - 8) = 0x4d474f4c ("LOGM"), *(u32 *)(base - 4) = write ptr.
++ * The downstream recovery kernel copies it to /proc/last_kmsg on boot, so
++ * mirroring printk there gives us the full log after a warm reset.
++ * Every write is cleaned to PoC so it survives a reset without cache flush.
++ */
++#include <linux/console.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/kernel.h>
++#include <linux/memblock.h>
++#include <linux/string.h>
++#include <asm/cacheflush.h>
++#include <asm/memory.h>
++
++#define SECLOG_BASE	0x26000000UL
++#define SECLOG_SIZE	0x200000UL
++#define SECLOG_MAGIC	0x4d474f4c
++
++#define FB_BASE		0x67000000UL
++#define FB_ROW		(1440 * 4)
++
++static u32 *seclog_mag, *seclog_ptr;
++static char *seclog_buf;
++
++static void seclog_flush(void *p, size_t len)
++{
++	__cpuc_flush_dcache_area(p, len);
++}
++
++static void seclog_write(struct console *con, const char *s, unsigned int n)
++{
++	while (n) {
++		u32 pos = *seclog_ptr & (SECLOG_SIZE - 1);
++		unsigned int chunk = min_t(unsigned int, n, SECLOG_SIZE - pos);
++
++		memcpy(seclog_buf + pos, s, chunk);
++		seclog_flush(seclog_buf + pos, chunk);
++		*seclog_ptr += chunk;
++		s += chunk;
++		n -= chunk;
++	}
++	seclog_flush(seclog_mag, 8);
++}
++
++static struct console seclog_console = {
++	.name	= "seclog",
++	.write	= seclog_write,
++	.flags	= CON_PRINTBUFFER | CON_ENABLED | CON_ANYTIME,
++	.index	= -1,
++};
++
++/* stage marker 2: green band once ioremap works (early_initcall) */
++static int __init note4_paint_green(void)
++{
++	u32 __iomem *fb = ioremap_wc(FB_BASE + FB_ROW * 128, FB_ROW * 128);
++	unsigned int i;
++
++	if (!fb)
++		return 0;
++	for (i = 0; i < FB_ROW * 128 / 4; i++)
++		writel_relaxed(0xff00ff00, fb + i);
++	wmb();
++	iounmap(fb);
++	pr_info("note4: early_initcall reached, green band painted\n");
++	return 0;
++}
++early_initcall(note4_paint_green);
++
++void __init note4_seclog_init(void)
++{
++	char *base;
++
++	memblock_reserve(SECLOG_BASE - PAGE_SIZE, SECLOG_SIZE + PAGE_SIZE);
++	base = phys_to_virt(SECLOG_BASE);
++
++	seclog_mag = (u32 *)(base - 8);
++	seclog_ptr = (u32 *)(base - 4);
++	seclog_buf = base;
++
++	if (*seclog_mag != SECLOG_MAGIC) {
++		*seclog_ptr = 0;
++		*seclog_mag = SECLOG_MAGIC;
++	}
++	seclog_write(NULL, "\n===== note4 mainline seclog =====\n", 35);
++
++	register_console(&seclog_console);
++	pr_info("note4: seclog console at %#lx, ptr=%u\n", SECLOG_BASE, *seclog_ptr);
++}
+diff --git a/drivers/clk/samsung/Kconfig b/drivers/clk/samsung/Kconfig
+index 198d8b621..74d6a5512 100644
+--- a/drivers/clk/samsung/Kconfig
++++ b/drivers/clk/samsung/Kconfig
+@@ -12,6 +12,7 @@ config COMMON_CLK_SAMSUNG
+ 	select EXYNOS_5410_COMMON_CLK if ARM && SOC_EXYNOS5410
+ 	select EXYNOS_5420_COMMON_CLK if ARM && SOC_EXYNOS5420
+ 	select EXYNOS_ARM64_COMMON_CLK if ARM64 && ARCH_EXYNOS
++	select EXYNOS_ARM64_COMMON_CLK if ARM && SOC_EXYNOS5433
+ 	select TESLA_FSD_COMMON_CLK if ARM64 && ARCH_TESLA_FSD
+ 
+ config S3C64XX_COMMON_CLK
+diff --git a/drivers/pinctrl/samsung/Kconfig b/drivers/pinctrl/samsung/Kconfig
+index 697ff7812..8691d7cd5 100644
+--- a/drivers/pinctrl/samsung/Kconfig
++++ b/drivers/pinctrl/samsung/Kconfig
+@@ -14,6 +14,7 @@ config PINCTRL_EXYNOS
+ 	select PINCTRL_SAMSUNG
+ 	select PINCTRL_EXYNOS_ARM if ARM && (ARCH_EXYNOS || ARCH_S5PV210)
+ 	select PINCTRL_EXYNOS_ARM64 if ARM64 && ARCH_EXYNOS
++	select PINCTRL_EXYNOS_ARM64 if ARM && SOC_EXYNOS5433
+ 
+ config PINCTRL_EXYNOS_ARM
+ 	bool "ARMv7-specific pinctrl driver for Samsung Exynos SoCs" if COMPILE_TEST
+-- 
+2.56.0
+

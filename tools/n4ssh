@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Run a command on the Note 4 (pmOS) over USB SSH, with retries.
+#   tools/n4ssh 'cmd'           N4_SUDO=1 to run via sudo (password from $N4_PW)
+cmd="$*"
+[ -n "$N4_SUDO" ] && cmd="echo '${N4_PW:?set N4_PW to the phone user password}' | sudo -S -p '' sh -c '$cmd'"
+for i in 1 2 3; do
+	out=$(timeout "${N4_TIMEOUT:-240}" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+		-o ConnectTimeout=40 -o BatchMode=yes -o LogLevel=ERROR -o ServerAliveInterval=15 \
+		mark@172.16.42.1 "$cmd" 2>&1); rc=$?
+	[ $rc -ne 124 ] && [ $rc -ne 255 ] && { printf '%s\n' "$out"; exit $rc; }
+	echo "[n4ssh] attempt $i failed rc=$rc" >&2
+done
+printf '%s\n' "$out"; exit $rc

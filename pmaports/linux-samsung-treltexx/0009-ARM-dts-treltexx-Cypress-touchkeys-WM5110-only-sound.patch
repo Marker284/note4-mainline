@@ -1,0 +1,52 @@
+From c60cb1739e7d799b43658034414f17af4bd14e6f Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:17 +0500
+Subject: [PATCH 09/16] ARM: dts: treltexx: Cypress touchkeys, WM5110-only
+ sound card
+
+---
+ .../boot/dts/samsung/exynos5433-treltexx.dts  | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index cf9ad918e..9895a7056 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -158,6 +158,12 @@ &cpu7 {
+ 	enable-method = "samsung,exynos5433-aarch32-smp";
+ };
+ 
++/* HDMI is disabled on the phone, so only the WM5110 path for the card */
++&{/sound} {
++	audio-codec = <&wm5110>;
++	i2s-controller = <&i2s0 0>;
++};
++
+ &cmu_disp {
+ 	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
+ 	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
+@@ -203,6 +209,21 @@ panel@0 {
+ 	};
+ };
+ 
++/* Capacitive recent-apps / back keys: same Cypress controller as TM2 */
++&hsi2c_9 {
++	status = "okay";
++
++	touchkey@20 {
++		compatible = "cypress,tm2-touchkey";
++		reg = <0x20>;
++		interrupt-parent = <&gpa3>;
++		interrupts = <2 IRQ_TYPE_EDGE_FALLING>;
++		vcc-supply = <&ldo32_reg>;
++		vdd-supply = <&ldo33_reg>;
++		linux,keycodes = <KEY_APPSELECT KEY_BACK>;
++	};
++};
++
+ &ldo31_reg {
+ 	regulator-name = "TSP_VDD_1.85V_AP";
+ 	regulator-min-microvolt = <1850000>;
+-- 
+2.56.0
+

@@ -1,0 +1,343 @@
+From 41363bb27a43ff07e60f17d4b1c846c608720ede Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:16 +0500
+Subject: [PATCH 05/16] power: supply: add minimal MAX77843 charger driver;
+ stmfts: re-enable IRQ on open; dts: Note 4 fuel gauge, drop CHARGER regulator
+
+---
+ .../boot/dts/samsung/exynos5433-treltexx.dts  |  22 ++
+ drivers/input/touchscreen/stmfts.c            |  11 +
+ drivers/power/supply/Kconfig                  |   7 +
+ drivers/power/supply/Makefile                 |   1 +
+ drivers/power/supply/max77843_charger.c       | 220 ++++++++++++++++++
+ 5 files changed, 261 insertions(+)
+ create mode 100644 drivers/power/supply/max77843_charger.c
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index add5c1fd4..5a827962b 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -86,6 +86,13 @@ reboot-mode-inform3 {
+ 
+ };
+ 
++/*
++ * The max77693/max77843 CHARGER regulator computes register values relative
++ * to its constraint minimum and clamps fast charge to 100 mA at boot;
++ * fast-charge/input currents are programmed by max77843-charger instead.
++ */
++/delete-node/ &charger_reg;
++
+ &ldo6_reg {
+ 	regulator-always-on;
+ };
+@@ -206,6 +213,21 @@ &ldo38_reg {
+ 	regulator-max-microvolt = <3000000>;
+ };
+ 
++/*
++ * MAX77843 fuel gauge (MAX17047 ModelGauge core) answers at 0x36 next to
++ * the PMIC at 0x66; Note 4 pack is 3220 mAh / 4.35 V, 10 mOhm sense.
++ */
++&hsi2c_8 {
++	fuel-gauge@36 {
++		compatible = "maxim,max17047";
++		reg = <0x36>;
++		maxim,rsns-microohm = <10000>;
++		maxim,over-heat-temp = <600>;
++		maxim,dead-volt = <3200>;
++		maxim,over-volt = <4400>;
++	};
++};
++
+ &stmfts {
+ 	touchscreen-size-x = <1439>;
+ 	touchscreen-size-y = <2559>;
+diff --git a/drivers/input/touchscreen/stmfts.c b/drivers/input/touchscreen/stmfts.c
+index 03e64aa16..dc722be0e 100644
+--- a/drivers/input/touchscreen/stmfts.c
++++ b/drivers/input/touchscreen/stmfts.c
+@@ -332,6 +332,8 @@ static int stmfts_command(struct stmfts_data *sdata, const u8 cmd)
+ 	return 0;
+ }
+ 
++static int stmfts_write_reg(struct stmfts_data *sdata, u8 reg, u8 val);
++
+ static int stmfts_input_open(struct input_dev *dev)
+ {
+ 	struct stmfts_data *sdata = input_get_drvdata(dev);
+@@ -347,6 +349,15 @@ static int stmfts_input_open(struct input_dev *dev)
+ 		return err;
+ 	}
+ 
++	if (sdata->needs_int_enable) {
++		/* this firmware drops the interrupt enable on sleep in/out */
++		i2c_smbus_write_byte(sdata->client, STMFTS_CLEAR_EVENT_STACK);
++		err = stmfts_write_reg(sdata, 0x1c, 0x41);
++		if (err)
++			dev_warn(&sdata->client->dev,
++				 "failed to enable interrupt: %d\n", err);
++	}
++
+ 	scoped_guard(mutex, &sdata->mutex) {
+ 		sdata->running = true;
+ 
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index b89ef40df..d01597808 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -630,6 +630,13 @@ config CHARGER_MAX77650
+ 	  Say Y to enable support for the battery charger control of MAX77650
+ 	  PMICs.
+ 
++config CHARGER_MAX77843
++	tristate "Maxim MAX77843 battery charger driver"
++	depends on MFD_MAX77843
++	help
++	  Status reporting and current setup for the charger block of the
++	  Maxim MAX77843 PMIC (Samsung Galaxy Note 4, TM2).
++
+ config CHARGER_MAX77693
+ 	tristate "Maxim MAX77693 battery charger driver"
+ 	depends on MFD_MAX77693
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index f3c0d1006..f8964146d 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -85,6 +85,7 @@ obj-$(CONFIG_CHARGER_LTC4162L)	+= ltc4162-l-charger.o
+ obj-$(CONFIG_CHARGER_MAX14577)	+= max14577_charger.o
+ obj-$(CONFIG_CHARGER_DETECTOR_MAX14656)	+= max14656_charger_detector.o
+ obj-$(CONFIG_CHARGER_MAX77650)	+= max77650-charger.o
++obj-$(CONFIG_CHARGER_MAX77843)	+= max77843_charger.o
+ obj-$(CONFIG_CHARGER_MAX77693)	+= max77693_charger.o
+ obj-$(CONFIG_CHARGER_MAX77705)	+= max77705_charger.o
+ obj-$(CONFIG_CHARGER_MAX77976)	+= max77976_charger.o
+diff --git a/drivers/power/supply/max77843_charger.c b/drivers/power/supply/max77843_charger.c
+new file mode 100644
+index 000000000..c481c55e8
+--- /dev/null
++++ b/drivers/power/supply/max77843_charger.c
+@@ -0,0 +1,220 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Minimal MAX77843 charger driver (Samsung Galaxy Note 4 / TM2).
++ *
++ * The charger runs autonomously; this driver reports its state as a
++ * power_supply and programs sane currents at probe, since the bootloader
++ * leaves fast-charge at 450 mA which cannot keep up with an active phone.
++ */
++#include <linux/module.h>
++#include <linux/mfd/max77693-common.h>
++#include <linux/mfd/max77843-private.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/regmap.h>
++
++#define CNFG_00_MODE_MASK	0x0f
++#define CNFG_00_MODE_CHG_BUCK	0x05
++#define CNFG_02_CC_MASK		0x3f		/* fast charge, 50 mA/step */
++#define CNFG_06_CHGPROT		(0x3 << 2)	/* unlock charger settings */
++#define CNFG_09_ILIM_MASK	0x7f		/* input limit, 33.3 mA/step */
++
++static unsigned int fast_charge_ma = 1500;
++module_param(fast_charge_ma, uint, 0444);
++MODULE_PARM_DESC(fast_charge_ma, "fast charge current (mA), 0..3150");
++
++static unsigned int input_limit_ma = 900;
++module_param(input_limit_ma, uint, 0444);
++MODULE_PARM_DESC(input_limit_ma, "input current limit (mA)");
++
++struct max77843_chg {
++	struct device *dev;
++	struct regmap *regmap;
++	struct power_supply *psy;
++};
++
++static enum power_supply_property max77843_chg_props[] = {
++	POWER_SUPPLY_PROP_ONLINE,
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT,
++	POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT,
++};
++
++static int max77843_chg_get_property(struct power_supply *psy,
++				     enum power_supply_property psp,
++				     union power_supply_propval *val)
++{
++	struct max77843_chg *chg = power_supply_get_drvdata(psy);
++	unsigned int ok, dtls, reg;
++	int ret;
++
++	ret = regmap_read(chg->regmap, MAX77843_CHG_REG_CHG_INT_OK, &ok);
++	if (ret)
++		return ret;
++	ret = regmap_read(chg->regmap, MAX77843_CHG_REG_CHG_DTLS_01, &dtls);
++	if (ret)
++		return ret;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_ONLINE:
++		val->intval = !!(ok & MAX77843_CHG_CHGIN_OK);
++		break;
++	case POWER_SUPPLY_PROP_STATUS:
++		switch (dtls & MAX77843_CHG_DTLS_MASK) {
++		case MAX77843_CHG_PQ_MODE:
++		case MAX77843_CHG_CC_MODE:
++		case MAX77843_CHG_CV_MODE:
++			val->intval = POWER_SUPPLY_STATUS_CHARGING;
++			break;
++		case MAX77843_CHG_TO_MODE:
++		case MAX77843_CHG_DO_MODE:
++			val->intval = POWER_SUPPLY_STATUS_FULL;
++			break;
++		default:
++			val->intval = (ok & MAX77843_CHG_CHGIN_OK) ?
++				POWER_SUPPLY_STATUS_NOT_CHARGING :
++				POWER_SUPPLY_STATUS_DISCHARGING;
++		}
++		break;
++	case POWER_SUPPLY_PROP_CHARGE_TYPE:
++		switch (dtls & MAX77843_CHG_DTLS_MASK) {
++		case MAX77843_CHG_PQ_MODE:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_TRICKLE;
++			break;
++		case MAX77843_CHG_CC_MODE:
++		case MAX77843_CHG_CV_MODE:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_NONE;
++		}
++		break;
++	case POWER_SUPPLY_PROP_HEALTH:
++		switch (dtls & MAX77843_CHG_BAT_DTLS_MASK) {
++		case MAX77843_CHG_OK_BAT:
++		case MAX77843_CHG_OK_LOW_VOLT_BAT:
++		case MAX77843_CHG_LOW_VOLT_BAT:
++			val->intval = POWER_SUPPLY_HEALTH_GOOD;
++			break;
++		case MAX77843_CHG_OVER_VOLT_BAT:
++			val->intval = POWER_SUPPLY_HEALTH_OVERVOLTAGE;
++			break;
++		case MAX77843_CHG_OVER_CURRENT_BAT:
++			val->intval = POWER_SUPPLY_HEALTH_OVERCURRENT;
++			break;
++		case MAX77843_CHG_LONG_BAT_TIME:
++			val->intval = POWER_SUPPLY_HEALTH_SAFETY_TIMER_EXPIRE;
++			break;
++		case MAX77843_CHG_NO_BAT:
++			val->intval = POWER_SUPPLY_HEALTH_DEAD;
++			break;
++		default:
++			val->intval = POWER_SUPPLY_HEALTH_UNKNOWN;
++		}
++		break;
++	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
++		ret = regmap_read(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_02, &reg);
++		if (ret)
++			return ret;
++		val->intval = (reg & CNFG_02_CC_MASK) * 50000;
++		break;
++	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
++		ret = regmap_read(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_09, &reg);
++		if (ret)
++			return ret;
++		val->intval = (reg & CNFG_09_ILIM_MASK) * 100000 / 3;
++		break;
++	default:
++		return -EINVAL;
++	}
++	return 0;
++}
++
++static const struct power_supply_desc max77843_chg_desc = {
++	.name		= "max77843-charger",
++	.type		= POWER_SUPPLY_TYPE_USB,
++	.properties	= max77843_chg_props,
++	.num_properties	= ARRAY_SIZE(max77843_chg_props),
++	.get_property	= max77843_chg_get_property,
++};
++
++static int max77843_chg_init_hw(struct max77843_chg *chg)
++{
++	unsigned int cc = min(fast_charge_ma, 3150U) / 50;
++	unsigned int ilim = min(input_limit_ma * 3 / 100, 0x7fU);
++	int ret;
++
++	ret = regmap_update_bits(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_06,
++				 CNFG_06_CHGPROT, CNFG_06_CHGPROT);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_02,
++				 CNFG_02_CC_MASK, cc);
++	if (ret)
++		return ret;
++	ret = regmap_update_bits(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_09,
++				 CNFG_09_ILIM_MASK, ilim);
++	if (ret)
++		return ret;
++	/* charger + buck on (stock does the same when a cable is present) */
++	return regmap_update_bits(chg->regmap, MAX77843_CHG_REG_CHG_CNFG_00,
++				  CNFG_00_MODE_MASK, CNFG_00_MODE_CHG_BUCK);
++}
++
++static int max77843_chg_probe(struct platform_device *pdev)
++{
++	struct max77693_dev *max77843 = dev_get_drvdata(pdev->dev.parent);
++	struct power_supply_config psy_cfg = {};
++	struct max77843_chg *chg;
++	int ret;
++
++	chg = devm_kzalloc(&pdev->dev, sizeof(*chg), GFP_KERNEL);
++	if (!chg)
++		return -ENOMEM;
++	chg->dev = &pdev->dev;
++	chg->regmap = max77843->regmap_chg;
++	if (!chg->regmap)
++		return -ENODEV;
++
++	ret = max77843_chg_init_hw(chg);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret, "failed to init charger\n");
++
++	psy_cfg.drv_data = chg;
++	psy_cfg.fwnode = dev_fwnode(&pdev->dev);
++	chg->psy = devm_power_supply_register(&pdev->dev, &max77843_chg_desc,
++					      &psy_cfg);
++	if (IS_ERR(chg->psy))
++		return PTR_ERR(chg->psy);
++
++	dev_info(&pdev->dev, "fast charge %u mA, input limit %u mA\n",
++		 min(fast_charge_ma, 3150U) / 50 * 50, input_limit_ma);
++	return 0;
++}
++
++static const struct platform_device_id max77843_chg_id[] = {
++	{ "max77843-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(platform, max77843_chg_id);
++
++static const struct of_device_id max77843_chg_of_match[] = {
++	{ .compatible = "maxim,max77843-charger" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, max77843_chg_of_match);
++
++static struct platform_driver max77843_chg_driver = {
++	.driver = {
++		.name = "max77843-charger",
++		.of_match_table = max77843_chg_of_match,
++	},
++	.probe = max77843_chg_probe,
++	.id_table = max77843_chg_id,
++};
++module_platform_driver(max77843_chg_driver);
++
++MODULE_DESCRIPTION("MAX77843 charger driver");
++MODULE_LICENSE("GPL");
+-- 
+2.56.0
+

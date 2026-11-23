@@ -1,0 +1,38 @@
+From b899c0e5b6df1659f5fd131583d11b8be5a611f1 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:18 +0500
+Subject: [PATCH 13/16] ARM: dts: treltexx: hall sensor (flip cover) as SW_LID
+
+---
+ arch/arm/boot/dts/samsung/exynos5433-treltexx.dts | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index e30552619..1b3c09853 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -26,6 +26,21 @@ / {
+ 	model_info-hw_rev = <0>;
+ 	model_info-hw_rev_end = <255>;
+ 
++	/* Hall sensor for the S View / flip cover (low = magnet = closed) */
++	hall-sensor {
++		compatible = "gpio-keys";
++		label = "flip cover";
++
++		switch-lid {
++			label = "flip cover";
++			gpios = <&gpa0 1 GPIO_ACTIVE_LOW>;
++			linux,input-type = <EV_SW>;
++			linux,code = <SW_LID>;
++			debounce-interval = <15>;
++			wakeup-source;
++		};
++	};
++
+ 	/* Android secure firmware is not PSCI (see enable-method below). */
+ 	/delete-node/ psci;
+ 
+-- 
+2.56.0
+

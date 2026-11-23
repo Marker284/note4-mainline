@@ -1,0 +1,173 @@
+From a3ac368c6a4b8d190e77788ce0122bf1fb5c2c2f Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:16 +0500
+Subject: [PATCH 06/16] drm/panel: s6e3ha2: pick touch-hsync variant by panel
+ ID (Note 4 needs BD 11); stmfts: vendor reinit on resume
+
+---
+ .../boot/dts/samsung/exynos5433-treltexx.dts  |  2 ++
+ drivers/gpu/drm/panel/panel-samsung-s6e3ha2.c | 31 +++++++++++++++++--
+ drivers/input/touchscreen/stmfts.c            | 29 ++++++++++++++---
+ 3 files changed, 56 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index 5a827962b..cf9ad918e 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -193,6 +193,8 @@ &cmu_disp {
+ &dsi {
+ 	panel@0 {
+ 		compatible = "samsung,s6e3ha2";
++		/* retail Note 4 OCTA (ID 40 81 xx): vendor sends BD 11 for touch hsync */
++		samsung,touch-hsync-alt;
+ 		reg = <0>;
+ 		vdd3-supply = <&ldo27_reg>;
+ 		vci-supply = <&ldo28_reg>;
+diff --git a/drivers/gpu/drm/panel/panel-samsung-s6e3ha2.c b/drivers/gpu/drm/panel/panel-samsung-s6e3ha2.c
+index 1db0c63b1..436a6d9c3 100644
+--- a/drivers/gpu/drm/panel/panel-samsung-s6e3ha2.c
++++ b/drivers/gpu/drm/panel/panel-samsung-s6e3ha2.c
+@@ -239,6 +239,9 @@ struct s6e3ha2 {
+ 	struct gpio_desc *enable_gpio;
+ 
+ 	const struct s6e3ha2_panel_desc *desc;
++	u8 id[3];
++	bool id_valid;
++	bool hsync_alt;		/* force BD 11 touch-hsync variant */
+ };
+ 
+ static int s6e3ha2_dcs_write(struct s6e3ha2 *ctx, const void *data, size_t len)
+@@ -350,10 +353,20 @@ static int s6e3ha2_test(struct s6e3ha2 *ctx)
+ 	return 0;
+ }
+ 
++/*
++ * Touch HSYNC output for the on-cell touch controller. Panels whose second
++ * ID byte is 0 (TM2) want 0x33 here; others (e.g. retail Galaxy Note 4,
++ * ID 40 81 xx) want 0x11, otherwise the STM FTS reports "fail detect sync"
++ * and never scans. This mirrors the vendor driver.
++ */
+ static int s6e3ha2_touch_hsync_on1(struct s6e3ha2 *ctx)
+ {
+-	s6e3ha2_dcs_write_seq_static(ctx, 0xbd, 0x33, 0x11, 0x02,
+-					0x16, 0x02, 0x16);
++	if (ctx->hsync_alt || (ctx->id_valid && ctx->id[1] != 0))
++		s6e3ha2_dcs_write_seq_static(ctx, 0xbd, 0x11, 0x11, 0x02,
++						0x16, 0x02, 0x16);
++	else
++		s6e3ha2_dcs_write_seq_static(ctx, 0xbd, 0x33, 0x11, 0x02,
++						0x16, 0x02, 0x16);
+ 	return 0;
+ }
+ 
+@@ -483,6 +496,19 @@ static int s6e3ha2_panel_init(struct s6e3ha2 *ctx)
+ 	s6e3ha2_call_write_func(ret, mipi_dsi_dcs_exit_sleep_mode(dsi));
+ 	usleep_range(5000, 6000);
+ 
++	if (!ctx->id_valid) {
++		mipi_dsi_set_maximum_return_packet_size(dsi, sizeof(ctx->id));
++		ret = mipi_dsi_dcs_read(dsi, 0x04 /* get display id */, ctx->id,
++					sizeof(ctx->id));
++		if (ret == sizeof(ctx->id)) {
++			ctx->id_valid = true;
++			dev_info(ctx->dev, "panel id %02x %02x %02x\n",
++				 ctx->id[0], ctx->id[1], ctx->id[2]);
++		} else {
++			dev_warn(ctx->dev, "failed to read panel id: %d\n", ret);
++		}
++	}
++
+ 	s6e3ha2_call_write_func(ret, s6e3ha2_test_key_on_f0(ctx));
+ 	s6e3ha2_call_write_func(ret, s6e3ha2_single_dsi_set(ctx));
+ 	s6e3ha2_call_write_func(ret, s6e3ha2_test_key_on_fc(ctx));
+@@ -691,6 +717,7 @@ static int s6e3ha2_probe(struct mipi_dsi_device *dsi)
+ 
+ 	ctx->dev = dev;
+ 	ctx->desc = of_device_get_match_data(dev);
++	ctx->hsync_alt = of_property_read_bool(dev->of_node, "samsung,touch-hsync-alt");
+ 
+ 	dsi->lanes = 4;
+ 	dsi->format = MIPI_DSI_FMT_RGB888;
+diff --git a/drivers/input/touchscreen/stmfts.c b/drivers/input/touchscreen/stmfts.c
+index dc722be0e..ef29d6bd1 100644
+--- a/drivers/input/touchscreen/stmfts.c
++++ b/drivers/input/touchscreen/stmfts.c
+@@ -333,6 +333,7 @@ static int stmfts_command(struct stmfts_data *sdata, const u8 cmd)
+ }
+ 
+ static int stmfts_write_reg(struct stmfts_data *sdata, u8 reg, u8 val);
++static int stmfts_reset_enable_int(struct stmfts_data *sdata);
+ 
+ static int stmfts_input_open(struct input_dev *dev)
+ {
+@@ -340,22 +341,29 @@ static int stmfts_input_open(struct input_dev *dev)
+ 	int err;
+ 
+ 	err = pm_runtime_resume_and_get(&sdata->client->dev);
++	dev_dbg(&sdata->client->dev, "open: runtime resume %d\n", err);
+ 	if (err)
+ 		return err;
+ 
+ 	err = i2c_smbus_write_byte(sdata->client, STMFTS_MS_MT_SENSE_ON);
++	dev_dbg(&sdata->client->dev, "open: sense on %d\n", err);
+ 	if (err) {
+ 		pm_runtime_put_sync(&sdata->client->dev);
+ 		return err;
+ 	}
+ 
+ 	if (sdata->needs_int_enable) {
+-		/* this firmware drops the interrupt enable on sleep in/out */
++		/*
++		 * Vendor (re)start: sleep out, sense on, force calibration,
++		 * flush events, re-enable the interrupt output (dropped on
++		 * sleep in/out by this firmware).
++		 */
++		msleep(50);
++		i2c_smbus_write_byte(sdata->client, STMFTS_FULL_FORCE_CALIBRATION);
++		msleep(50);
+ 		i2c_smbus_write_byte(sdata->client, STMFTS_CLEAR_EVENT_STACK);
+ 		err = stmfts_write_reg(sdata, 0x1c, 0x41);
+-		if (err)
+-			dev_warn(&sdata->client->dev,
+-				 "failed to enable interrupt: %d\n", err);
++		dev_dbg(&sdata->client->dev, "open: int enable %d\n", err);
+ 	}
+ 
+ 	scoped_guard(mutex, &sdata->mutex) {
+@@ -617,6 +625,12 @@ static int stmfts_configure(struct stmfts_data *sdata)
+ 	if (err)
+ 		return err;
+ 
++	if (sdata->needs_int_enable) {
++		/* vendor sequence: no CX auto-tune at boot, settle after sleep out */
++		msleep(50);
++		goto calibrate;
++	}
++
+ 	/* optional tuning */
+ 	err = stmfts_command(sdata, STMFTS_MS_CX_TUNING);
+ 	if (err)
+@@ -629,6 +643,7 @@ static int stmfts_configure(struct stmfts_data *sdata)
+ 		dev_warn(&sdata->client->dev,
+ 			 "failed to perform self auto tune: %d\n", err);
+ 
++calibrate:
+ 	err = stmfts_command(sdata, STMFTS_FULL_FORCE_CALIBRATION);
+ 	if (err)
+ 		return err;
+@@ -854,6 +869,12 @@ static int stmfts_runtime_resume(struct device *dev)
+ 	struct i2c_client *client = sdata->client;
+ 	int ret;
+ 
++	/* vendor driver fully re-initialises this firmware on every resume */
++	if (sdata->needs_int_enable) {
++		ret = stmfts_reset_enable_int(sdata);
++		dev_dbg(dev, "resume: reset %d\n", ret);
++	}
++
+ 	ret = i2c_smbus_write_byte(client, STMFTS_SLEEP_OUT);
+ 	if (ret)
+ 		dev_err(dev, "failed to resume device: %d\n", ret);
+-- 
+2.56.0
+

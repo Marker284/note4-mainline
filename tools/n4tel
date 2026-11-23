@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run a command in the pmOS initramfs debug shell (telnet 172.16.42.1:23).
+cmd="$*"
+{ sleep 1; printf '\033[24;80R'; printf ' echo __N4B__; %s; echo __N4E__\n' "$cmd"; for i in $(seq 1 $(( ${N4_WAIT:-4} * 2 ))); do sleep 0.5; printf '\033[24;80R'; done; } \
+	| timeout $(( ${N4_WAIT:-4} + 15 )) nc -q 2 172.16.42.1 23 2>/dev/null \
+	| LC_ALL=C tr -d '\r\377\373\374\375\376\001\003\030\037\042' \
+	| sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | awk '/^__N4E__/{exit} f; /^__N4B__/{f=1}'

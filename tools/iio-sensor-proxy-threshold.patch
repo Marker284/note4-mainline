@@ -1,0 +1,7 @@
+--- a/src/orientation.c
++++ b/src/orientation.c
+@@ -82,8 +82,8 @@
+-#define THRESHOLD_LANDSCAPE  35
+-#define THRESHOLD_PORTRAIT  35
++#define THRESHOLD_LANDSCAPE  60
++#define THRESHOLD_PORTRAIT  60

@@ -1,0 +1,9 @@
+[Unit]
+Description=Note 4: re-probe BCM4358 if brcmfmac missed it at boot
+After=systemd-modules-load.service
+Before=NetworkManager.service
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sleep 3; [ -e /sys/class/net/wlan0 ] && exit 0; D=/sys/bus/pci/devices/0000:01:00.0; modprobe -r brcmfmac; [ -e $D ] && echo 1 > $D/remove; sleep 1; echo 1 > /sys/bus/pci/rescan; sleep 1; modprobe brcmfmac'
+[Install]
+WantedBy=multi-user.target

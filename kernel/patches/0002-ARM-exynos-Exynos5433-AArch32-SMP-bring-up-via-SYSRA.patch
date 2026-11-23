@@ -1,0 +1,152 @@
+From c25b56b9d6945218aa27cbaba86b7db7da022b49 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:15 +0500
+Subject: [PATCH 02/16] ARM: exynos: Exynos5433 AArch32 SMP bring-up via
+ SYSRAM_NS boot address + PMU
+
+---
+ arch/arm/mach-exynos/Kconfig         |  5 ++
+ arch/arm/mach-exynos/Makefile        |  1 +
+ arch/arm/mach-exynos/note4-headsmp.S | 10 ++++
+ arch/arm/mach-exynos/note4-smp.c     | 87 ++++++++++++++++++++++++++++
+ 4 files changed, 103 insertions(+)
+ create mode 100644 arch/arm/mach-exynos/note4-headsmp.S
+ create mode 100644 arch/arm/mach-exynos/note4-smp.c
+
+diff --git a/arch/arm/mach-exynos/Kconfig b/arch/arm/mach-exynos/Kconfig
+index 7d10da032..bc46bd88b 100644
+--- a/arch/arm/mach-exynos/Kconfig
++++ b/arch/arm/mach-exynos/Kconfig
+@@ -102,6 +102,11 @@ config NOTE4_BOOT_PROBE
+ 	bool "Galaxy Note 4: paint S-Boot framebuffer red in zImage entry"
+ 	depends on SOC_EXYNOS5433
+ 
++config NOTE4_SMP
++	bool "Exynos5433 AArch32 secondary CPU boot (Samsung secure firmware)"
++	depends on SOC_EXYNOS5433 && SMP
++	default y
++
+ config NOTE4_SECLOG
+ 	bool "Galaxy Note 4: mirror printk into Samsung sec_log (last_kmsg)"
+ 	depends on SOC_EXYNOS5433
+diff --git a/arch/arm/mach-exynos/Makefile b/arch/arm/mach-exynos/Makefile
+index 1ec02e81b..31b59a63e 100644
+--- a/arch/arm/mach-exynos/Makefile
++++ b/arch/arm/mach-exynos/Makefile
+@@ -14,3 +14,4 @@ obj-$(CONFIG_EXYNOS_MCPM)	+= mcpm-exynos.o
+ CFLAGS_mcpm-exynos.o		+= -march=armv7-a
+ 
+ obj-$(CONFIG_NOTE4_SECLOG) += note4-seclog.o
++obj-$(CONFIG_NOTE4_SMP) += note4-smp.o note4-headsmp.o
+diff --git a/arch/arm/mach-exynos/note4-headsmp.S b/arch/arm/mach-exynos/note4-headsmp.S
+new file mode 100644
+index 000000000..23a679081
+--- /dev/null
++++ b/arch/arm/mach-exynos/note4-headsmp.S
+@@ -0,0 +1,10 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#include <linux/linkage.h>
++#include <asm/assembler.h>
++
++	.arm
++/* Secondary entry from the secure monitor: MMU off, caches in unknown state. */
++ENTRY(note4_secondary_startup)
++	bl	v7_invalidate_l1
++	b	secondary_startup
++ENDPROC(note4_secondary_startup)
+diff --git a/arch/arm/mach-exynos/note4-smp.c b/arch/arm/mach-exynos/note4-smp.c
+new file mode 100644
+index 000000000..17c242fe9
+--- /dev/null
++++ b/arch/arm/mach-exynos/note4-smp.c
+@@ -0,0 +1,87 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Secondary CPU bring-up for Exynos5433 running in AArch32 under Samsung's
++ * Android secure firmware (Galaxy Note 4). No PSCI here: the monitor
++ * releases a freshly powered core to the address stored at
++ * SYSRAM_NS + 0x1c, so we write that, switch the core on in the PMU and
++ * send an event. Mirrors the downstream 3.10 platsmp/pmu-exynos5433 code.
++ */
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/jiffies.h>
++#include <linux/smp.h>
++#include <asm/cacheflush.h>
++#include <asm/cputype.h>
++#include <asm/smp_plat.h>
++
++#define EXYNOS5433_SYSRAM_NS		0x0207b000
++#define SYSRAM_NS_BOOT_ADDR		0x1c
++
++#define EXYNOS5433_PMU			0x105c0000
++#define PMU_CORE_CONFIG(n)		(0x2000 + (n) * 0x80)
++#define PMU_CORE_STATUS(n)		(0x2004 + (n) * 0x80)
++#define PMU_CORE_PWR_EN			0xf
++
++static void __iomem *sysram_ns;
++static void __iomem *pmu;
++
++extern void note4_secondary_startup(void);
++
++static unsigned int core_index(unsigned int cpu)
++{
++	u32 mpidr = cpu_logical_map(cpu);
++
++	return MPIDR_AFFINITY_LEVEL(mpidr, 0) + 4 * MPIDR_AFFINITY_LEVEL(mpidr, 1);
++}
++
++static void __init note4_smp_prepare_cpus(unsigned int max_cpus)
++{
++	sysram_ns = ioremap(EXYNOS5433_SYSRAM_NS, SZ_4K);
++	pmu = ioremap(EXYNOS5433_PMU, SZ_16K);
++	if (!sysram_ns || !pmu)
++		pr_err("note4-smp: ioremap failed\n");
++}
++
++static int note4_boot_secondary(unsigned int cpu, struct task_struct *idle)
++{
++	unsigned int n = core_index(cpu);
++	unsigned long timeout;
++	u32 val;
++
++	if (!sysram_ns || !pmu)
++		return -ENODEV;
++
++	writel_relaxed(__pa_symbol(note4_secondary_startup),
++		       sysram_ns + SYSRAM_NS_BOOT_ADDR);
++	dsb_sev();
++
++	val = readl_relaxed(pmu + PMU_CORE_CONFIG(n));
++	if ((readl_relaxed(pmu + PMU_CORE_STATUS(n)) & PMU_CORE_PWR_EN) !=
++	    PMU_CORE_PWR_EN) {
++		writel_relaxed(val | PMU_CORE_PWR_EN, pmu + PMU_CORE_CONFIG(n));
++		timeout = jiffies + msecs_to_jiffies(10);
++		while ((readl_relaxed(pmu + PMU_CORE_STATUS(n)) &
++			PMU_CORE_PWR_EN) != PMU_CORE_PWR_EN) {
++			if (time_after(jiffies, timeout)) {
++				pr_err("note4-smp: CPU%u (pmu core %u) did not power up\n",
++				       cpu, n);
++				return -ETIMEDOUT;
++			}
++			udelay(10);
++		}
++	}
++
++	/* the monitor may be sitting in WFE waiting for the boot address */
++	writel_relaxed(__pa_symbol(note4_secondary_startup),
++		       sysram_ns + SYSRAM_NS_BOOT_ADDR);
++	dsb_sev();
++	return 0;
++}
++
++static const struct smp_operations note4_smp_ops __initconst = {
++	.smp_prepare_cpus	= note4_smp_prepare_cpus,
++	.smp_boot_secondary	= note4_boot_secondary,
++};
++CPU_METHOD_OF_DECLARE(note4_exynos5433_smp, "samsung,exynos5433-aarch32-smp",
++		      &note4_smp_ops);
+-- 
+2.56.0
+

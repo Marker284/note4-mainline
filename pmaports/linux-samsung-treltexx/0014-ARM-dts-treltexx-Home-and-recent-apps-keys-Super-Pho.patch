@@ -1,0 +1,39 @@
+From 96c342876064d8ed39dec71ee225ec451080fed3 Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:18 +0500
+Subject: [PATCH 14/16] ARM: dts: treltexx: Home and recent-apps keys -> Super
+ (Phosh overview)
+
+---
+ arch/arm/boot/dts/samsung/exynos5433-treltexx.dts | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index 1b3c09853..1fe69bf9a 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -212,6 +212,11 @@ &gpu_opp_table {
+ 	/delete-node/ opp-700000000;
+ };
+ 
++/* Home button opens/closes the Phosh overview (Super) */
++&{/gpio-keys/homepage-key} {
++	linux,code = <KEY_LEFTMETA>;
++};
++
+ &cmu_disp {
+ 	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
+ 	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
+@@ -268,7 +273,8 @@ touchkey@20 {
+ 		interrupts = <2 IRQ_TYPE_EDGE_FALLING>;
+ 		vcc-supply = <&ldo32_reg>;
+ 		vdd-supply = <&ldo33_reg>;
+-		linux,keycodes = <KEY_APPSELECT KEY_BACK>;
++		/* recent-apps -> Super (Phosh overview), back -> Back */
++		linux,keycodes = <KEY_LEFTMETA KEY_BACK>;
+ 	};
+ };
+ 
+-- 
+2.56.0
+

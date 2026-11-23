@@ -1,0 +1,2 @@
+SUBSYSTEM=="iio", ATTR{name}=="ssp-accel", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, 1"
+SUBSYSTEM=="iio", ATTR{name}=="ssp-prox", ENV{PROXIMITY_NEAR_LEVEL}="100"

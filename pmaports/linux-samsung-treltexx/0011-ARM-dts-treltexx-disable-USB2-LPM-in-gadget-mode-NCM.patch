@@ -1,0 +1,33 @@
+From d0b2c111767bdda1b22e7ac7ef7d717021611b7e Mon Sep 17 00:00:00 2001
+From: Marker284 <73433822+Marker284@users.noreply.github.com>
+Date: Mon, 23 Nov 2026 12:38:17 +0500
+Subject: [PATCH 11/16] ARM: dts: treltexx: disable USB2 LPM in gadget mode
+ (NCM latency/throughput)
+
+---
+ arch/arm/boot/dts/samsung/exynos5433-treltexx.dts | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+index 7917da72b..cf70c118b 100644
+--- a/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
++++ b/arch/arm/boot/dts/samsung/exynos5433-treltexx.dts
+@@ -174,6 +174,15 @@ &timer {
+ 	arm,cpu-registers-not-fw-configured;
+ };
+ 
++/*
++ * Don't advertise USB 2.0 LPM: the host parks the link in L1 between
++ * packets and dwc3 never wakes it to send IN data, so every reply waited
++ * for the host's next packet (300-1000 ms ping, ~70 KB/s over NCM).
++ */
++&usbdrd_dwc3 {
++	snps,usb2-gadget-lpm-disable;
++};
++
+ &cmu_disp {
+ 	/* same DISP_PLL rate as TM2 (same S6E3HA2 WQHD panel) */
+ 	assigned-clocks = <&cmu_disp CLK_FOUT_DISP_PLL>,
+-- 
+2.56.0
+

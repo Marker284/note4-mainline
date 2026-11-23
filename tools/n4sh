@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Run a command on the Note 4 debug initramfs over the USB ACM console.
+#   tools/n4sh 'dmesg | tail'        (N4_WAIT=seconds to wait for output)
+# busybox ash asks the terminal for the cursor position (ESC[6n) at every
+# prompt and blocks until it gets an answer, so we always send one.
+TTY=${N4_TTY:-/dev/ttyACM0}
+OUT=$(mktemp)
+stty -F "$TTY" raw -echo 115200 2>/dev/null
+timeout "$(( ${N4_WAIT:-4} + 2 ))" cat "$TTY" > "$OUT" &
+sleep 0.3
+printf '\033[24;80R\n' > "$TTY"; sleep 0.3
+printf '\033[24;80R echo __N4_BEGIN__; %s; echo __N4_END__\n' "$*" > "$TTY"
+for i in $(seq 1 $(( ${N4_WAIT:-4} * 10 ))); do
+	sleep 0.1
+	grep -q '^__N4_END__' "$OUT" 2>/dev/null && break
+	printf '\033[24;80R' > "$TTY"
+done
+printf '\033[24;80R' > "$TTY"
+wait
+tr -d '\r' < "$OUT" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' | awk '/^__N4_END__/{exit} f; /^__N4_BEGIN__/{f=1}'
+rm -f "$OUT"

@@ -1,0 +1,7 @@
+#!/bin/sh
+# pmbootstrap for the Note 4 port (separate config/work dir from other ports).
+# If PMB_SUDO_PW and PMB_SUDOWRAP are set, sudo is answered non-interactively.
+if [ -n "$PMB_SUDOWRAP" ]; then
+	export PATH="$PMB_SUDOWRAP:$PATH" SUDO_ASKPASS="$PMB_SUDOWRAP/askpass" PMB_SUDO="$PMB_SUDOWRAP/sudo"
+fi
+exec pmbootstrap -c "$HOME/.config/pmbootstrap_note4.cfg" "$@"

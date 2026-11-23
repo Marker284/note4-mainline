@@ -1,0 +1,27 @@
+# Reference: <https://postmarketos.org/devicepkg>
+pkgname=device-samsung-treltexx
+pkgdesc="Samsung Galaxy Note 4 (Exynos, SM-N910C/H)"
+pkgver=1
+pkgrel=4
+url="https://postmarketos.org"
+license="MIT"
+arch="armv7"
+options="!check !archcheck"
+depends="
+	mkbootimg
+	linux-samsung-treltexx
+	postmarketos-base
+"
+makedepends="devicepkg-dev"
+source="deviceinfo"
+
+build() {
+	devicepkg_build $startdir $pkgname
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+}
+sha512sums="
+c30458c0aa8490682f578185c35b2772bc9f3757a949f924fd532e49d5767ac7501ec4d08803319026ced86832d5be5950be6fa476b5dba947f377a207f47983  deviceinfo
+"

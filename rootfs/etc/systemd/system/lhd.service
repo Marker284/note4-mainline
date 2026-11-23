@@ -1,0 +1,17 @@
+[Unit]
+Description=Broadcom LHD (BCM4773 sensor hub / GNSS loader)
+After=systemd-modules-load.service systemd-udev-settle.service
+Before=iio-sensor-proxy.service
+ConditionPathExists=/dev/bbd_control
+[Service]
+RootDirectory=/var/lib/lhd/root
+MountAPIVFS=yes
+BindPaths=/dev /sys
+ExecStart=/system/vendor/bin/lhd /system/etc/lhd.conf
+WorkingDirectory=/
+Environment=LD_LIBRARY_PATH=/system/lib
+User=root
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

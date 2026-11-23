@@ -1,0 +1,10 @@
+[Unit]
+Description=Galaxy Note 4 touch-key backlight follows the display
+After=systemd-udev-settle.service
+
+[Service]
+ExecStart=/usr/bin/note4-keylight
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
